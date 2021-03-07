@@ -350,6 +350,7 @@ def perf_ratio(
     pr_per_timestep = ac_energy * unit_adj / expected_dc
     results_data = pd.concat([ac_energy, expected_dc, pr_per_timestep], axis=1)
     results_data.columns = ['ac_energy', 'expected_dc', 'pr_per_timestep']
+    # return results_data
 
     results = PrResults(
         timestep=(timestep, timestep_str),
@@ -469,7 +470,6 @@ class PrResults(param.Parameterized):
     """Results from a PR calculation.
     """
     dc_nameplate = param.Number(
-        bounds=(0, None),
         doc=(
             'Summation of nameplate ratings (W) for all installed modules'
             ' of system.'
