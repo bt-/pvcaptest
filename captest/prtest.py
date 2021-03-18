@@ -332,8 +332,12 @@ def perf_ratio(
             )
             return
 
-    timestep = get_common_timestep(poa, units='h', string_output=False)
-    timestep_str = get_common_timestep(poa, units='h', string_output=True)
+    try:
+        timestep = get_common_timestep(poa, units='h', string_output=False)
+        timestep_str = get_common_timestep(poa, units='h', string_output=True)
+    except IndexError:
+        timestep = 0
+        timestep_str = 'none'
 
     expected_dc = (
         availability
