@@ -500,6 +500,164 @@ def filter_grps(grps, rcs, irr_col, low, high, **kwargs):
     df_flt_grpby = df_flt.groupby(pd.Grouper(freq=freq, **kwargs))
     return df_flt_grpby
 
+def irr_select_balanced(data, perc_below=50):
+    """
+    Select irradiance closest with the percent of points below closest to perc_below.
+
+    Parameters
+    ----------
+    data : DataFrame
+        Produced by ____ function
+    """
+    return (data['perc_below'] - perc_below).abs().sort_values()
+
+def irr_select_max_points(data):
+    """
+    Select reporting irradiance that results in the most data points remaining.
+
+    Parameters
+    ----------
+    data : DataFrame
+        Produced by ____ function
+    """
+    return data[data['valid']]['total_pts'].idxmax()
+
+def get_reporting_irr_table(
+    data,
+    low,
+    high,
+    irr_col='GlobInc',
+    min_perc_below=0.4,
+    max_perc_below=0.6,
+):
+    """
+    Create table of all possible reporting irradiance bands.
+
+    Calculates the bounds for a band of data that is `low` * reference irradiance
+    up to `high` * reference irradiance, where the reference irradiance is every
+    irradiance measurement in `data`. For each of the resulting bands the percent of
+    data below the potential reference irradiance is calculated.
+
+    Every reference irradiance is marked as valid if the percent of data below the
+    reference irradiance falls between `min_perc_below` and `max_perc_below`.
+
+    Parameters
+    ----------
+    data : pandas DataFrame
+        DataFrame containing irradiance data for calculating the irradiance
+        reporting condition.
+    low : float
+        Bottom value for irradiance filter, usually between 0.5 and 0.8.
+    high : float
+        Top value for irradiance filter, usually between 1.2 and 1.5.
+    irr_col : str
+        String that is the name of the column with the irradiance data.
+    min_perc_below : float, default 0.4
+        Minimum percent of data allowed to be below the reporting irradiance within the
+        band of data for reference irradiance to be valid.
+    max_perc_below : float, default 0.6
+        Maximum percent of data allowed to be above the reporting irradiance within the
+        band of data for reference irradiance to be valid.
+    save_data : str, default None
+        Set to a path to save the returned DataFrame as a csv file to that path.
+        Default does not save the DataFrame.
+
+    Returns
+    -------
+    DataFrame
+        Contains columns -
+    """
+    # poa_flt = rc_source.rview(['poa', 'power'], filtered_data=True).copy()
+    #
+    # poa_flt['plus_perc'] = poa_flt.iloc[:, 0] * 1.2
+    # poa_flt['minus_perc'] = poa_flt.iloc[:, 0] * 0.8
+    #
+    # poa_flt.sort_values('irr_poa_mean', inplace=True)
+    #
+    # below_count = [poa_flt['irr_poa_mean'].between(low, ref).sum() for low, ref in zip(poa_flt['minus_perc'], poa_flt['irr_poa_mean'])]
+    # poa_flt['below_count'] = below_count
+    #
+    # above_count = [poa_flt['irr_poa_mean'].between(ref, high).sum() for ref, high in zip(poa_flt['irr_poa_mean'], poa_flt['plus_perc'])]
+    # poa_flt['above_count'] = above_count
+    #
+    # poa_flt['total_pts'] = poa_flt['above_count'] + poa_flt['below_count']
+    #
+    # poa_flt['perc_above'] = (poa_flt['above_coVVCCw_count'] / poa_flt['total_pts']) * 100
+    #
+    # poa_flt.set_index('irr_poa_mean', inplace=True)
+    #
+    # poa_flt['valid'] = poa_flt['perc_below'].between(40, 60)
+    #
+    # valid_df = poa_flt[poa_flt['valid']]
+
+
+def balanced_rep_irr_plot(data):
+    """
+    Creates four linked plots visualizing the possible valid reference irradiances.
+    """
+    # rep_cond_plot = (
+    #     data['below_count'].hvplot(kind='scatter') *\
+    #     data['above_count'].hvplot(kind='scatter') +\
+    #     data['perc_below'].hvplot(kind='scatter') * hv.HLine(40) * hv.HLine(60)
+    #     data['total_pts'].hvplot(kind='scatter') +\
+    #     data['real_pwr-mtr-sum-agg'].hvplot(kind='scatter')
+    # )
+    #
+    # rep_cond_plot.opts(
+    #     opts.HLine(line_width=1),
+    #     opts.VLine(line_width=1),
+    # ).cols(1)
+
+    # return rep_cond_plot
+
+def balanced_rep_irr(
+    df,
+    low,
+    high,
+    irr_col='GlobInc',
+    select_irr=irr_select_balanced,
+    plot=False,
+):
+    """
+    Calculate all reporting irradiances that acheive a 40/60 balance.
+
+    The reporting irradiance selected is determined by the function passed to
+    `select_irr`. By default this will pick the reporting irradiance that is closest to
+    being above and below 50 percent of the points in the band defined by `low` and
+    `high`.
+
+    Parameters
+    ----------
+    df: pandas DataFrame
+        DataFrame containing irradiance data for calculating the irradiance
+        reporting condition.
+    low: float
+        Bottom value for irradiance filter, usually between 0.5 and 0.8.
+    high: float
+        Top value for irradiance filter, usually between 1.2 and 1.5.
+    irr_col: str
+        String that is the name of the column with the irradiance data.
+    select_irr : function, default irr_select_balanced
+        Function that selects an irradiance from the dataframe produced.
+    plot: bool, default False
+        Plots graphical view of algorithim searching for reporting irradiance.
+        Useful for troubleshooting or understanding the method.
+
+    COPIED AND PASTED COMMENTED OUT CODE FROM IPYNB, NEED TO PUT IT INTO A SEPARATE
+    FUNCTION TO PRODUCE/SAVE THE DATAFRAME.
+    """
+    pass
+    reporting_irr_table = get_reporting_irr_table(
+        data=data,
+        low=low,
+        high=high,
+        irr_col=irr_col,
+        min_perc_below=min_perc_below,
+        max_perc_below=max_perc_below,
+    )
+    irr_rc = select_irr(reporting_irr_table)
+    flt_df = filter_irr(data, irr_col, low, high, ref_val=irr_rc)
+    return (irr_rc, flt_df)
 
 def irr_rc_balanced(df, low, high, irr_col='GlobInc', plot=False):
     """
