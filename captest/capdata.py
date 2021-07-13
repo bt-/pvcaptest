@@ -2629,6 +2629,7 @@ class CapData(object):
         13
         """
         self.data_filtered = func(self.data_filtered, *args, **kwargs)
+        return self
 
     @update_summary
     def filter_sensors(self, perc_diff=None, inplace=True):
