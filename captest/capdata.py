@@ -2451,15 +2451,12 @@ class CapData(object):
         return self
 
     @update_summary
-    def filter_outliers(self, inplace=True, **kwargs):
+    def filter_outliers(self, **kwargs):
         """
         Apply eliptic envelope from scikit-learn to remove outliers.
 
         Parameters
         ----------
-        inplace : bool
-            Default of true writes filtered dataframe back to data_filtered
-            attribute.
         **kwargs
             Passed to sklearn EllipticEnvelope.  Contamination keyword
             is useful to adjust proportion of outliers in dataset.
@@ -2485,10 +2482,8 @@ class CapData(object):
         clf_1 = sk_cv.EllipticEnvelope(**kwargs)
         clf_1.fit(X1)
 
-        if inplace:
-            self.data_filtered = self.data_filtered[clf_1.predict(X1) == 1]
-        else:
-            return self.data_filtered[clf_1.predict(X1) == 1]
+        self.data_filtered = self.data_filtered[clf_1.predict(X1) == 1]
+        return self
 
     @update_summary
     def filter_pf(self, pf, inplace=True):
