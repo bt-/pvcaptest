@@ -3008,7 +3008,7 @@ class CapData(object):
         return results
 
     @update_summary
-    def fit_regression(self, filter=False, inplace=True, summary=True):
+    def fit_regression(self, filter=False, summary=True):
         """
         Perform a regression with statsmodels on filtered data.
 
@@ -3018,9 +3018,6 @@ class CapData(object):
             When true removes timestamps where the residuals are greater than
             two standard deviations.  When false just calcualtes ordinary least
             squares regression.
-        inplace: bool, default True
-            If filter is true and inplace is true, then function overwrites the
-            filtered data for sim or das.  If false returns a CapData object.
         summary: bool, default True
             Set to false to not print regression summary.
 
@@ -3039,11 +3036,8 @@ class CapData(object):
             if summary:
                 print(reg.summary())
             df = df[np.abs(reg.resid) < 2 * np.sqrt(reg.scale)]
-            dframe_flt = self.data_filtered.loc[df.index, :]
-            if inplace:
-                self.data_filtered = dframe_flt
-            else:
-                return dframe_flt
+            self.data_filtered = self.data_filtered.loc[df.index, :]
+            return self
         else:
             if summary:
                 print(reg.summary())
