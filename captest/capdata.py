@@ -2213,7 +2213,7 @@ class CapData(object):
             return pd.concat(dfs_to_concat, axis=1)
 
     @update_summary
-    def filter_irr(self, low, high, ref_val=None, col_name=None, inplace=True):
+    def filter_irr(self, low, high, ref_val=None, col_name=None):
         """
         Filter on irradiance values.
 
@@ -2230,9 +2230,6 @@ class CapData(object):
             Column name of irradiance data to filter.  By default uses the POA
             irradiance set in regression_cols attribute or average of the POA
             columns.
-        inplace : bool, default True
-            Default true write back to data_filtered or return filtered
-            dataframe.
 
         Returns
         -------
@@ -2249,10 +2246,8 @@ class CapData(object):
 
         df_flt = filter_irr(self.data_filtered, irr_col, low, high,
                             ref_val=ref_val)
-        if inplace:
-            self.data_filtered = df_flt
-        else:
-            return df_flt
+        self.data_filtered = df_flt
+        return self
 
     @update_summary
     def filter_pvsyst(self, inplace=True):
