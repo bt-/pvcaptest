@@ -2334,7 +2334,7 @@ class CapData(object):
 
     @update_summary
     def filter_time(self, start=None, end=None, drop=False, days=None, test_date=None,
-                    inplace=True, wrap_year=False):
+                    wrap_year=False):
         """
         Select data for a specified time period.
 
@@ -2359,9 +2359,6 @@ class CapData(object):
             Must be format that can be converted by pandas.to_datetime.  Not
             required if `start` and `end` are specified.  Requires `days`
             argument. Time period returned will be centered on this date.
-        inplace : bool, default True
-            If inplace is true, then function overwrites the filtered
-            dataframe. If false returns a DataFrame.
         wrap_year : bool, default False
             If true calls the wrap_year_end function.  See wrap_year_end
             docstring for details. wrap_year_end was cntg_eoy prior to v0.7.0.
@@ -2417,10 +2414,8 @@ class CapData(object):
                 else:
                     df_temp = self.data_filtered.loc[start:end, :]
 
-        if inplace:
-            self.data_filtered = df_temp
-        else:
-            return df_temp
+        self.data_filtered = df_temp
+        return self
 
     @update_summary
     def filter_days(self, days, drop=False, inplace=True):
