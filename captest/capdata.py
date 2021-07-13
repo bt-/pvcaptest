@@ -2418,7 +2418,7 @@ class CapData(object):
         return self
 
     @update_summary
-    def filter_days(self, days, drop=False, inplace=True):
+    def filter_days(self, days, drop=False):
         """
         Select or drop timestamps for days passed.
 
@@ -2447,10 +2447,8 @@ class CapData(object):
         else:
             filtered_data = self.data_filtered.loc[ix_all_days, :]
 
-        if inplace:
-            self.data_filtered = filtered_data
-        else:
-            return filtered_data
+        self.data_filtered = filtered_data
+        return self
 
     @update_summary
     def filter_outliers(self, inplace=True, **kwargs):
