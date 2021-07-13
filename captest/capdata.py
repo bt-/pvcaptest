@@ -2693,7 +2693,7 @@ class CapData(object):
             return df_out
 
     @update_summary
-    def filter_clearsky(self, window_length=20, ghi_col=None, inplace=True,
+    def filter_clearsky(self, window_length=20, ghi_col=None,
                         keep_clear=True, **kwargs):
         """
         Use pvlib detect_clearsky to remove periods with unstable irradiance.
@@ -2714,10 +2714,6 @@ class CapData(object):
         ghi_col : str, default None
             The name of a column name of measured GHI data. Overrides default
             attempt to automatically identify a column of GHI data.
-        inplace : bool, default True
-            When true removes periods with unstable irradiance.  When false
-            returns pvlib detect_clearsky results, which by default is a series
-            of booleans.
         keep_clear : bool, default True
             Set to False to keep cloudy periods.
         **kwargs
@@ -2760,14 +2756,10 @@ class CapData(object):
                                  'the window length.')
 
         if keep_clear:
-            df_out = self.data_filtered[clear_per]
+            self.data_filtered = self.data_filtered[clear_per]
         else:
-            df_out = self.data_filtered[~clear_per]
-
-        if inplace:
-            self.data_filtered = df_out
-        else:
-            return df_out
+            self.data_filtered = self.data_filtered[~clear_per]
+        return self
 
     def filter_op_state(self, op_state, mult_inv=None, inplace=True):
         """
