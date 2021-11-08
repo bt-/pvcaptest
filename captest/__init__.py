@@ -1,5 +1,6 @@
 from captest import capdata
 from captest import util
+from captest import filters
 
 from ._version import get_versions
 __version__ = get_versions()['version']
