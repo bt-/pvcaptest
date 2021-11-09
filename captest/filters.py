@@ -20,14 +20,20 @@ class FilterBase(param.Parameterized):
     """I think this class could actually just be the new version of CapData, which will have the data parameters which is a DataFrame"""
     value = param.DataFrame(precedence=-1)
 
+    poa_column = param.String('POA pyranometer W/m2', precedence=-1)
+    power_column = param.String('real power meter kW', precedence=-1)
+
+    @param.depends('value')
+    def plot(self):
+        return self.value.hvplot(kind='scatter', x=self.poa_column, y=self.power_column).opts(height=500, width=1000)
+
+
 class FilterIrradiance(FilterBase):
     input = param.ClassSelector(class_=FilterBase, constant=True, precedence=-1)
-    description = param.String(default='This filter removes irradiance below {} and above {}', precedence=-1)
-
-    value = param.DataFrame(precedence=-1)
-
-    x_column = param.String('POA pyranometer W/m2', precedence=-1)
-    y_column = param.String('real power meter kW', precedence=-1)
+    description = param.String(
+        default='This filter removes irradiance below {} and above {}',
+        precedence=-1
+    )
 
     range = param.Range(default=(0,1200), bounds=(0, 1200))
 
@@ -38,25 +44,19 @@ class FilterIrradiance(FilterBase):
     def __str__(self):
         return self.description.format(self.range[0], self.range[1])
 
-    @param.depends('input.value', 'x_column', 'y_column', 'range', watch=True)
+    @param.depends('input.value', 'poa_column', 'power_column', 'range', watch=True)
     def _update_value(self):
         input = self.input.value
         if input is None or input.empty:
-            self.value = pd.DataFrame({self.x_column: [], self.y_column: []})
+            self.value = pd.DataFrame({self.poa_column: [], self.power_column: []})
         else:
-            min = self.range[0]
-            max = self.range[1]
-            x_column = self.x_column
-            filter = (input[x_column] >= min) & (input[x_column] <= max)
-            self.value = input[filter]
-
-    @param.depends('value')
-    def plot(self):
-        return self.value.hvplot(kind='scatter', x=self.x_column, y=self.y_column).opts(xlim=self.param.range.bounds).opts(height=500, width=1000)
+            self.value = input[
+                (input[self.poa_column] >= self.range[0]) &
+                (input[self.poa_column] <= self.range[1])
+            ]
 
 class FilterTime(FilterBase):
     input = param.ClassSelector(class_=FilterBase, constant=True, precedence=-1)
-#     value = param.DataFrame(precedence=-1)
     description = param.String(default='This filter {} the data from {} to {}', precedence=-1)
     period = param.CalendarDateRange(default=(dt.date(2019, 11, 7), dt.date(2020, 1, 22)))
     drop = param.Boolean(default=False)
@@ -76,7 +76,7 @@ class FilterTime(FilterBase):
     def _update_value(self):
         input = self.input.value
         if input is None or input.empty:
-            self.value = pd.DataFrame({self.x_column: [], self.y_column: []})
+            self.value = pd.DataFrame({self.poa_column: [], self.power_column: []})
         else:
             if self.drop:
                 ix = input.loc[self.period[0]:self.period[1], :].index
@@ -84,18 +84,13 @@ class FilterTime(FilterBase):
             else:
                 self.value = input.loc[self.period[0]:self.period[1], :]
 
-    @param.depends('value')
-    def plot(self):
-        return self.value.hvplot(kind='scatter', x='POA pyranometer W/m2', y='real power meter kW').relabel('Irr').opts(height=500, width=1000)
-
 class FilterOutliers(FilterBase):
     input = param.ClassSelector(class_=FilterBase, constant=True, precedence=-1)
-    value = param.DataFrame(precedence=-1)
     contamination = param.Number(default=0.04, bounds=(0, 1))
     support_fraction = param.Number(default=0.9, bounds=(0, 1))
     apply = param.Boolean(default=True)
-    x_column = param.String('POA pyranometer W/m2', precedence=-1)
-    y_column = param.String('real power meter kW', precedence=-1)
+    # poa_column = param.String('POA pyranometer W/m2', precedence=-1)
+    # power_column = param.String('real power meter kW', precedence=-1)
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -105,10 +100,10 @@ class FilterOutliers(FilterBase):
     def _update_value(self):
         input = self.input.value
         if input is None or input.empty:
-            self.value = pd.DataFrame({self.x_column: [], self.y_column: []})
+            self.value = pd.DataFrame({self.poa_column: [], self.power_column: []})
         else:
             if self.apply:
-                XandY = input[[self.x_column, self.y_column]].copy()
+                XandY = input[[self.poa_column, self.power_column]].copy()
                 if XandY.shape[1] > 2:
                     return warnings.warn('Too many columns. Try running '
                                          'aggregate_sensors before using '
@@ -125,7 +120,3 @@ class FilterOutliers(FilterBase):
                 self.value = input[clf_1.predict(X1) == 1]
             else:
                 self.value = input
-
-    @param.depends('value')
-    def plot(self):
-        return self.value.hvplot(kind='scatter', x=self.x_column, y=self.y_column).opts(height=500, width=1000)
