@@ -2,6 +2,7 @@ import pytest
 import copy
 import numpy as np
 import pandas as pd
+import statsmodels.formula.api as smf
 from captest import capdata as pvc
 from captest import util
 from captest import columngroups as cg
@@ -123,3 +124,28 @@ def nrel_clear_sky(nrel):
     nrel.column_groups['irr-ghi-clear_sky'] = ['ghi_mod_csky']
     nrel.trans_keys = list(nrel.column_groups.keys())
     return nrel
+
+@pytest.fixture
+def capdata_reg_result_one_coeff():
+    """
+    Create a CapData instance with regression results.
+    """
+    np.random.seed(9876789)
+
+    meas = pvc.CapData('meas')
+    meas.rc = {'x': [6]}
+
+    nsample = 100
+    e = np.random.normal(size=nsample)
+
+    x = np.linspace(0, 10, 100)
+    das_y = x * 2
+    das_y = das_y + e
+
+    das_df = pd.DataFrame({'y': das_y, 'x': x})
+
+    das_model = smf.ols(formula='y ~ x - 1', data=das_df)
+
+    meas.regression_results = das_model.fit()
+    meas.data_filtered = pd.DataFrame()
+    return meas

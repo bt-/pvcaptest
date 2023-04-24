@@ -2027,6 +2027,16 @@ class TestDataColumnsToExcel():
         assert df.iloc[0, 1] == 'inv1_power'
         os.remove(xlsx_file)
 
+class TestRegressionUncertainty():
+    def test_sets_sy_attribute(self, capdata_reg_result_one_coeff):
+        capdata_reg_result_one_coeff.regression_uncertainty()
+        pred = capdata_reg_result_one_coeff.regression_results.get_prediction(
+            capdata_reg_result_one_coeff.rc
+        )
+        assert isinstance(capdata_reg_result_one_coeff.sy, float)
+        assert capdata_reg_result_one_coeff.sy == (
+            pred.se_obs[0] / pred.predicted_mean[0]
+        )
 
 if __name__ == '__main__':
     unittest.main()

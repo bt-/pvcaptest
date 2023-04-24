@@ -3110,31 +3110,16 @@ class CapData(object):
                 print(reg.summary())
             self.regression_results = reg
 
-    def uncertainty():
-        """Calculate random standard uncertainty of the regression.
-
-        (SEE times the square root of the leverage of the reporting
-        conditions).
-
-        Not fully implemented yet.  Need to review and determine what actual
-        variable should be.
+    def regression_uncertainty(self):
         """
-        pass
-        # SEE = np.sqrt(self.regression_results.mse_resid)
-        #
-        # df = self.get_reg_cols()
-        #
-        # rc_pt = {key: val[0] for key, val in self.rc.items()}
-        # rc_pt['power'] = actual
-        # df.append([rc_pt])
-        #
-        # reg = fit_model(df, fml=self.regression_formula)
-        #
-        # infl = reg.get_influence()
-        # leverage = infl.hat_matrix_diag[-1]
-        # sy = SEE * np.sqrt(leverage)
-        #
-        # return(sy)
+        Calculate random standard uncertainty of the regression.
+
+        Returns
+        -------
+        None, stores regression uncertainty as sy attribute.
+        """
+        pred = self.regression_results.get_prediction(self.rc)
+        self.sy = pred.se_obs[0] / pred.predicted_mean[0]
 
     def spatial_uncert(self, column_groups):
         """
