@@ -2038,5 +2038,34 @@ class TestRegressionUncertainty():
             pred.se_obs[0] / pred.predicted_mean[0]
         )
 
+class TestGetRegressionColumnGroups():
+    def test_agg_each_indpendent_reg_var(self, meas):
+        meas.agg_sensors(agg_map={
+            'irr_poa_pyran': 'mean',
+            'temp_amb': 'mean',
+            'wind': 'mean',
+            'temp_mod_': 'mean',
+        })
+        reg_column_groups = meas._get_regression_column_groups()
+        for term in ['poa', 't_amb', 'w_vel']:
+            assert term in reg_column_groups.keys()
+        assert reg_column_groups['poa'] == 'irr_poa_pyran'
+        assert reg_column_groups['t_amb'] == 'temp_amb'
+        assert reg_column_groups['w_vel'] == 'wind'
+        assert 'power' in meas.pre_agg_reg_trans.keys()
+        assert 'power' not in reg_column_groups.keys()
+
+    def test_no_agg(self, pvsyst):
+        reg_column_groups = pvsyst._get_regression_column_groups()
+        for term in ['poa', 't_amb', 'w_vel']:
+            assert term in reg_column_groups.keys()
+        assert reg_column_groups['poa'] == 'irr-poa-'
+        assert reg_column_groups['t_amb'] == 'temp-amb-'
+        assert reg_column_groups['w_vel'] == 'wind--'
+
+class TestSpatialUncert():
+    def test_warns_if_only_one_column_per_group(self, ):
+        pass
+
 if __name__ == '__main__':
     unittest.main()

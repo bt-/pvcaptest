@@ -3121,30 +3121,59 @@ class CapData(object):
         pred = self.regression_results.get_prediction(self.rc)
         self.sy = pred.se_obs[0] / pred.predicted_mean[0]
 
-    def spatial_uncert(self, column_groups):
+    def _get_regression_column_groups(self):
         """
-        Spatial uncertainties of the independent regression variables.
+        Determine the source column groups in the data for right hand regression terms.
 
-        Parameters
-        ----------
-        column_groups : list
-            Measurement groups to calculate spatial uncertainty.
+        To calculate spatial uncertaintity the measurements from each sensor of a
+        particular type that were aggregated to the data column that is regressed
+        against must be identified. E.g. when regressing against an average of
+        measurements from multiple POA pyranometers, the columns used to calculate the
+        average must be identified to calculate the spatial uncertaintity.
 
         Returns
         -------
-        None, stores dictionary of spatial uncertainties as an attribute.
+        dict
+            Dictionary mapping independent regression variable names to the column group
+            names of the column groups used to calculate the aggregations.
+        """
+        if self.pre_agg_reg_trans is None:
+            reg_var_groups = self.regression_cols
+        else:
+            reg_var_groups = self.pre_agg_reg_trans
+        reg_var_groups_wo_left_terms = copy.deepcopy(reg_var_groups)
+        reg_var_groups_wo_left_terms.pop(self.regression_formula.split('~')[0].strip())
+        return reg_var_groups_wo_left_terms
+
+    def spatial_uncert(self, show_results=True):
+        """
+        Calculates spatial uncertainties of the independent regression variables.
+
+        Assumes that when there are multiple sensors of the same type on a project
+        used to calcualte an aggregation with the agg_sensors method that the sensors
+        are distributed across the project site in a reasonable manner i.e. the sensors
+        are not redundant and mounted adjacent to each other.
+
+        Returns
+        -------
+        None, stores dictionary of spatial uncertainties to the `spatial_uncerts` attribute.
         """
         spatial_uncerts = {}
-        for group in column_groups:
-            df = self.view(group, filtered_data=True)
-            # prevent aggregation from updating column groups?
-            # would not need the below line then
-            df = df[[col for col in df.columns if 'agg' not in col]]
+        reg_var_groups = self._get_regression_column_groups()
+        for group in reg_var_groups.values():
+            df = self.floc[group]
             qty_sensors = df.shape[1]
-            s_spatial = df.std(axis=1)
-            b_spatial_j = s_spatial / (qty_sensors ** (1 / 2))
-            b_spatial = ((b_spatial_j ** 2).sum() / b_spatial_j.shape[0]) ** (1 / 2)
-            spatial_uncerts[group] = b_spatial
+            if qty_sensors == 1:
+                print('There is only one {} sensor. The spatial uncertainty will not be'
+                      ' meaningful without multiple sensors distributed across a project'
+                      ' site.'.format(group))
+            else:
+                s_spatial = df.std(axis=1)
+                b_spatial_j = s_spatial / (qty_sensors ** (1 / 2))
+                b_spatial = ((b_spatial_j ** 2).sum() / b_spatial_j.shape[0]) ** (1 / 2)
+                spatial_uncerts[group] = b_spatial
+                if show_results:
+                    print('b_spatial for {} = {:0.3f}'.format(group, b_spatial))
         self.spatial_uncerts = spatial_uncerts
 
     def expanded_uncert(self, grp_to_term, k=1.96):
