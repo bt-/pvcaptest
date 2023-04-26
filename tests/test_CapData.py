@@ -462,18 +462,21 @@ class TestIndexCapdata():
         are the values of the key."""
         out = pvc.index_capdata(meas, 'irr_poa_pyran', filtered=True)
         assert out.equals(meas.data[['met1_poa_pyranometer', 'met2_poa_pyranometer']])
+        assert isinstance(out, pd.DataFrame)
 
     def test_single_label_regression_columns_key(self, meas):
         """Test that regression_columns key returns the columns of Capdata.data that
         are the values of the key."""
         out = pvc.index_capdata(meas, 'poa', filtered=True)
         assert out.equals(meas.data[['met1_poa_pyranometer', 'met2_poa_pyranometer']])
+        assert isinstance(out, pd.DataFrame)
 
     def test_single_label_data_column_label(self, meas):
         """Test that a column label returns the columns of Capdata.data that
         are the values of the key. Passes label through to DataFrame.loc."""
         out = pvc.index_capdata(meas, 'met1_poa_pyranometer', filtered=True)
-        assert out.equals(meas.data.loc[:, 'met1_poa_pyranometer'])
+        assert out.equals(meas.data.loc[:, 'met1_poa_pyranometer'].to_frame())
+        assert isinstance(out, pd.DataFrame)
 
     def test_list_of_labels_column_group_keys(self, meas):
         """
@@ -487,6 +490,7 @@ class TestIndexCapdata():
             'met1_amb_temp',
             'met2_amb_temp',
         ]])
+        assert isinstance(out, pd.DataFrame)
 
     def test_list_of_labels_regression_columns_keys(self, meas):
         """
@@ -500,6 +504,7 @@ class TestIndexCapdata():
             'met1_amb_temp',
             'met2_amb_temp',
         ]])
+        assert isinstance(out, pd.DataFrame)
 
     def test_list_of_labels_data_column_labels(self, meas):
         """
@@ -510,6 +515,7 @@ class TestIndexCapdata():
             meas, ['met1_poa_pyranometer', 'met2_amb_temp'], filtered=True
         )
         assert out.equals(meas.data.loc[:, ['met1_poa_pyranometer', 'met2_amb_temp']])
+        assert isinstance(out, pd.DataFrame)
 
     def test_list_of_labels_mixed(self, meas):
         """
@@ -527,6 +533,7 @@ class TestIndexCapdata():
             'met2_amb_temp',
             'met1_windspeed',
         ]])
+        assert isinstance(out, pd.DataFrame)
 
     def test_list_of_labels_mixed_regression_column_maps_to_column_label(self, meas):
         """
@@ -543,6 +550,7 @@ class TestIndexCapdata():
             'met1_poa_pyranometer',
             'met1_windspeed',
         ]])
+        assert isinstance(out, pd.DataFrame)
 
 
 class TestLocAndFloc():
@@ -2114,6 +2122,17 @@ class TestSpatialUncert():
             'b_spatial for irr_poa = 4.179\n'
             'b_spatial for temp_amb = 0.571\n'
         )
+        
+    def test_pvsyst(self, pvsyst, capsys):
+        pvsyst.spatial_uncert()
+        captured = capsys.readouterr()
+        sys.stdout.write(captured.out)
+        assert captured.out == (
+            'b_spatial for irr-poa- = 4.179\n'
+            'b_spatial for temp-amb- = 0.571\n'
+            'b_spatial for wind-- = 0.571\n'
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

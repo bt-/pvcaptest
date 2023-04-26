@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `CapData.copy` now copies the pre aggregation attributes `pre_agg_cols`, `pre_agg_trans`,
   and `pre_agg_reg_trans`.
+- Make returned type from `loc` and `floc` always a DataFrame.
 
 
 [0.11.2]: https://github.com/pvcaptest/pvcaptest/compare/v0.11.1...v0.11.2

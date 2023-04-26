@@ -1371,7 +1371,7 @@ def index_capdata(capdata, label, filtered=True):
         elif label in capdata.regression_cols.keys():
             return data[capdata.column_groups[capdata.regression_cols[label]]]
         elif label in data.columns:
-            return data.loc[:, label]
+            return pd.DataFrame(data.loc[:, label])
     elif isinstance(label, list):
         cols_to_return = []
         for l in label:
@@ -3162,15 +3162,15 @@ class CapData(object):
         spatial_uncerts = {}
         reg_var_groups = self._get_regression_column_groups()
         for group in reg_var_groups.values():
-            df = self.floc[group]
-            qty_sensors = df.shape[1]
+            group_data = self.floc[group]
+            qty_sensors = group_data.shape[1]
             if qty_sensors == 1:
                 print('There is only one {} sensor. The spatial uncertainty will not be'
                       ' meaningful without multiple sensors distributed across a project'
                       ' site.'.format(group))
                 spatial_uncerts[group] = np.NaN
             else:
-                s_spatial = df.std(axis=1)
+                s_spatial = group_data.std(axis=1)
                 b_spatial_j = s_spatial / (qty_sensors ** (1 / 2))
                 b_spatial = ((b_spatial_j ** 2).sum() / b_spatial_j.shape[0]) ** (1 / 2)
                 spatial_uncerts[group] = b_spatial
