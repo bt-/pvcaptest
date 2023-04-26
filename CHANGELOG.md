@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 [Unreleased]
+### Added
+- Method to calculate regression uncertainty.
+- User Guide to docs with section on uncertainty.
+
+### Changed
+- `spatial_uncert` method does not require a list of column groups.
+
+### Fixed
+- `CapData.copy` now copies the pre aggregation attributes `pre_agg_cols`, `pre_agg_trans`,
+  and `pre_agg_reg_trans`.
 
 
 [0.11.2]: https://github.com/pvcaptest/pvcaptest/compare/v0.11.1...v0.11.2
