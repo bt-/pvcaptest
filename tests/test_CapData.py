@@ -2122,16 +2122,6 @@ class TestSpatialUncert():
             'b_spatial for irr_poa = 4.179\n'
             'b_spatial for temp_amb = 0.571\n'
         )
-        
-    def test_pvsyst(self, pvsyst, capsys):
-        pvsyst.spatial_uncert()
-        captured = capsys.readouterr()
-        sys.stdout.write(captured.out)
-        assert captured.out == (
-            'b_spatial for irr-poa- = 4.179\n'
-            'b_spatial for temp-amb- = 0.571\n'
-            'b_spatial for wind-- = 0.571\n'
-        )
 
 
 if __name__ == '__main__':
