@@ -2178,7 +2178,6 @@ class CapData(object):
                     agg_col = trans_group + '_' + agg_map[trans_group] + '_agg'  # noqa: E501
                 except TypeError:
                     agg_col = trans_group + '_' + col_name + '_agg'
-                print(agg_col)
                 self.regression_cols[reg_var] = agg_col
 
     def data_columns_to_excel(self, sort_by_reversed_names=True):
@@ -3154,9 +3153,11 @@ class CapData(object):
         are distributed across the project site in a reasonable manner i.e. the sensors
         are not redundant and mounted adjacent to each other.
 
+        See documentation User Guide for additional details.
+
         Returns
         -------
-        None, stores dictionary of spatial uncertainties to the `spatial_uncerts` attribute.
+        None, stores dictionary of spatial uncertainties to the `u_spatial` attribute.
         """
         spatial_uncerts = {}
         reg_var_groups = self._get_regression_column_groups()
@@ -3167,6 +3168,7 @@ class CapData(object):
                 print('There is only one {} sensor. The spatial uncertainty will not be'
                       ' meaningful without multiple sensors distributed across a project'
                       ' site.'.format(group))
+                spatial_uncerts[group] = np.NaN
             else:
                 s_spatial = df.std(axis=1)
                 b_spatial_j = s_spatial / (qty_sensors ** (1 / 2))
@@ -3174,7 +3176,7 @@ class CapData(object):
                 spatial_uncerts[group] = b_spatial
                 if show_results:
                     print('b_spatial for {} = {:0.3f}'.format(group, b_spatial))
-        self.spatial_uncerts = spatial_uncerts
+        self.u_spatial = spatial_uncerts
 
     def expanded_uncert(self, grp_to_term, k=1.96):
         """
@@ -3223,7 +3225,7 @@ class CapData(object):
         pred_cap = pred.predicted_mean[0]
         perc_diffs = {}
         for group, inst_uncert in self.instrument_uncert.items():
-            by_group = (inst_uncert ** 2 + self.spatial_uncerts[group] ** 2) ** (1 / 2)
+            by_group = (inst_uncert ** 2 + self.u_spatial[group] ** 2) ** (1 / 2)
             rcs = self.rc.copy()
             rcs.loc[0, grp_to_term[group]] = rcs.loc[0, grp_to_term[group]] + by_group
             pred_cap_uncert = self.regression_results.get_prediction(rcs).predicted_mean[0]

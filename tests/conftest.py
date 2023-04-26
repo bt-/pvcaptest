@@ -149,3 +149,43 @@ def capdata_reg_result_one_coeff():
     meas.regression_results = das_model.fit()
     meas.data_filtered = pd.DataFrame()
     return meas
+
+@pytest.fixture
+def capdata_spatial():
+    """
+    Create a CapData object with dummy data in the data attribute.
+
+    For each of the test regression terms (poa and t_amb), the dummy data contains three
+    columns of data (e.g. poa1, poa2, poa3). The dataframe should have 3 rows of data
+    with a datetime index beginning on 2023-04-01 12:00 and 1 minute frequency.
+    """
+    # create a datetime index
+    index = pd.date_range(
+        start='2023-04-01 12:00', periods=3, freq='min', tz='America/Chicago'
+    )
+    # create a dataframe with dummy data
+    data = pd.DataFrame(
+        {
+            'poa1': [800, 805, 796.1],
+            'poa2': [804, 781.5, 799],
+            'poa3': [802.1, 799, 800],
+            't_amb1': [28, 29, 30.1],
+            't_amb2': [29.2, 29.4, 29],
+            't_amb3': [27, 31, 30.5],
+            'power': [500, 510, 505],
+        },
+        index=index,
+    )
+    # create a CapData object
+    cd = pvc.CapData('test')
+    # set the data attribute to the dummy data
+    cd.data = data
+    cd.data_filtered = cd.data.copy()
+    cd.column_groups = {
+        'irr_poa': ['poa1', 'poa2', 'poa3'],
+        'temp_amb': ['t_amb1', 't_amb2', 't_amb3'],
+    }
+    cd.trans_keys = list(cd.column_groups.keys())
+    cd.regression_cols = {'power': 'power', 'poa': 'irr_poa', 't_amb': 'temp_amb'}
+    return cd
+

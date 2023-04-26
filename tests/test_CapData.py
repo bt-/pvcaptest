@@ -8,6 +8,7 @@ import pytz
 import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
+import sys
 import json
 import warnings
 
@@ -2064,8 +2065,55 @@ class TestGetRegressionColumnGroups():
         assert reg_column_groups['w_vel'] == 'wind--'
 
 class TestSpatialUncert():
-    def test_warns_if_only_one_column_per_group(self, ):
-        pass
+    def test_output_if_only_one_column_per_group(self, capdata_spatial, capsys):
+        capdata_spatial.data = capdata_spatial.data.loc[
+            :, ['poa1', 't_amb1', 't_amb2', 't_amb3', 'power']
+        ]
+        capdata_spatial.data_filtered = capdata_spatial.data.copy()
+        capdata_spatial.column_groups = {
+            'irr_poa': ['poa1'],
+            'temp_amb': ['t_amb1', 't_amb2', 't_amb3'],
+        }
+        capdata_spatial.spatial_uncert()
+        captured = capsys.readouterr()
+        sys.stdout.write(captured.out)
+        assert captured.out == (
+            'There is only one irr_poa sensor. The spatial uncertainty will not be'
+            ' meaningful without multiple sensors distributed across a project'
+            ' site.\n'
+            'b_spatial for temp_amb = 0.571\n'
+        )
+        assert np.isnan(capdata_spatial.u_spatial['irr_poa'])
+        assert capdata_spatial.u_spatial['temp_amb'] == pytest.approx(0.571223508179)
+
+
+    def test_result(self, capdata_spatial):
+        """
+        Check results of spatial uncertainty calculations on dummy data.
+
+        Expected results calculated in a Google sheet, woksheet "spatial_uncert":
+        https://docs.google.com/spreadsheets/d/1-R0Vh1ZQcmaqi5mUtkpTr2uKoKsNmhvMYMlZ6b0G660/edit?usp=sharing
+        """
+        capdata_spatial.agg_sensors(agg_map={'irr_poa': 'mean', 'temp_amb': 'mean'})
+        capdata_spatial.spatial_uncert()
+        assert capdata_spatial.u_spatial['irr_poa'] == pytest.approx(4.17918120636)
+        assert capdata_spatial.u_spatial['temp_amb'] == pytest.approx(0.571223508179)
+
+    def test_result_output(self, capdata_spatial, capsys):
+        """
+        Check results of spatial uncertainty calculations on dummy data.
+
+        Expected results calculated in a Google sheet, woksheet "spatial_uncert":
+        https://docs.google.com/spreadsheets/d/1-R0Vh1ZQcmaqi5mUtkpTr2uKoKsNmhvMYMlZ6b0G660/edit?usp=sharing        
+        """
+        capdata_spatial.agg_sensors(agg_map={'irr_poa': 'mean', 'temp_amb': 'mean'})
+        capdata_spatial.spatial_uncert()
+        captured = capsys.readouterr()
+        sys.stdout.write(captured.out)
+        assert captured.out == (
+            'b_spatial for irr_poa = 4.179\n'
+            'b_spatial for temp_amb = 0.571\n'
+        )
 
 if __name__ == '__main__':
     unittest.main()
