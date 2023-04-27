@@ -1,10 +1,52 @@
 .. _uncert:
 
+################
 Test Uncertainty
-================
+################
 
 This section discusses the approach to quantifying uncertainty of capacity test results 
 implemented in pvcaptest.
+
+
+Regression Uncertainty (Random Standard Uncertainty)
+====================================================
+Pvcaptest uses the `statsmodels <https://www.statsmodels.org/stable/index.html>`__ package
+to perform the regression analysis. Once the regression is fitted the regression results
+object provides a method to create a prediction (substitute the RCs into the model),
+which also provides the "standard error of the prediction" (the ``se_obs`` attribute of 
+the prediction object). This provides the Random Standard Uncertainty of the predicted 
+value, :math:`S_{Y}`. The ``CapData.regression_uncertainty`` method calculates the 
+regression uncertainty and stores it in the ``sy`` attribute of the ``CapData`` object
+as a fraction of the predicted power.
+
+Systematic Standard Uncertainty
+===============================
+The Systematic Standard Uncertainty, :math:`b_{Y}` will account for the uncertainty in 
+the meterological measurements due to the instrument uncertainties and the spatial 
+uncertainty due to the estimation of the average conditions of the PV plant by a few 
+point measurements.
+
+Instrument Uncertainty
+----------------------
+This section discusses the calculation of instrument uncertainty of the sensors. A capacity
+test following the ASTM E2848 standard will rely on measurements of POA irradiance, ambient
+temperature, and wind speed.
+
+Pvcaptest requires that the user provide the instrument uncertainty for each group of 
+sensors. The uncertainties may be relative or absolute. Absolute uncertainties are 
+assumed to be valid at the reporting conditions. Relative uncertainties are used to 
+calculate absolute uncertainties at the reporting conditions by the
+``CapData.instrument_uncert`` method.
+
+For example, for a reporting irradiance of 850 W/m\ :sup:`2` and a measurement uncertainty of 3%
+the absolute uncertainty would be 25.5 W/m\ :sup:`2`.
+
+The absolute instrument uncertainties, :math:`b_{inst}` are saved in the ``CapData.u_instrument``
+attribute. These are combined with the spatial uncertainties, as described below.
+
+Currently, pvcaptest does not provide functionality to calculate the instrument uncertainty.
+Future work may include functionality to calculate the instrument uncertainty of irradiance
+measurements.
 
 Spatial Uncertainty
 -------------------
@@ -16,7 +58,7 @@ independent regression variables defined in the regression equation.
 
 To obtain a meaningful spatial uncertainty there must be multiple sensors measuring the
 same variable. The ``spatial_uncert`` method assumes that the ``agg_sensors`` method was
-used to aggregate the measurements of the same variable from multiple sensors across
+used to aggregate the measurements of the same variable across multiple sensors for
 each time interval. Because the ``agg_sensors`` method modifies the ``regression_cols``
 attribute it also saves a copy of the original ``regression_cols`` attribute to 
 ``pre_agg_reg_trans``. The ``spatial_uncert`` method uses uses the column groups

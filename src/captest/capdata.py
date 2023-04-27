@@ -3109,9 +3109,14 @@ class CapData(object):
                 print(reg.summary())
             self.regression_results = reg
 
-    def regression_uncertainty(self):
+    def regression_uncertainty(self, show_results=True):
         """
         Calculate random standard uncertainty of the regression.
+
+        Parameters
+        ----------
+        show_results : bool, default True
+            Print the results of the regression uncertainty calculation.
 
         Returns
         -------
@@ -3119,6 +3124,11 @@ class CapData(object):
         """
         pred = self.regression_results.get_prediction(self.rc)
         self.sy = pred.se_obs[0] / pred.predicted_mean[0]
+        if show_results:
+            print(
+                'The Random Standard Uncertainty of the '
+                'regression, Sy = {:0.2f} %'.format(self.sy * 100)
+            )
 
     def _get_regression_column_groups(self):
         """
@@ -3177,6 +3187,78 @@ class CapData(object):
                 if show_results:
                     print('b_spatial for {} = {:0.3f}'.format(group, b_spatial))
         self.u_spatial = spatial_uncerts
+
+    def instrument_uncert(
+        self,
+        instrument_uncert_relative={'poa': 3,},
+        instrument_uncert_absolute={'t_amb': 0.2, 'w_vel': 0.3},
+        show_results=True
+    ):
+        """
+        Calculate absolute instrument uncertainty at reporting conditions.
+
+        Assumes that absolute instrument uncertainties are valid at the reporting
+        conditions.
+
+        Parameters
+        ----------
+        instrument_uncert_relative: dict, default {'poa': 3}
+            Keys are the independent regression variables defined in
+            `regression_formula` and values are the relative instrument uncertanties
+            in percent. The default assumes the standard regression equation.
+        instrument_uncert_absolute: dict, default {'t_amb': 0.2, 'w_vel': 3}
+            Keys are the independent regression variables defined in
+            `regression_formula` and values are the absolute instrument uncertanties.
+            The default assumes the standard regression equation. The default for
+            temperature measurements is +/- 0.2 C and the default for wind speed is
+            +/- 0.3 m/s.
+        show_results : bool, default True
+            Prints the absolute instrument uncertainties at the reporting conditions.
+
+        Returns
+        -------
+        None
+            Stores dictionary of absolute instrument uncertainties at the reporting
+            conditions to the `u_instrument` attribute. The keys are the column group
+            names of the groups used to derive the aggregated data regressed against.
+        """
+        abs_inst_uncerts = {}
+        reg_var_groups = self._get_regression_column_groups()
+        if any([
+            term in instrument_uncert_relative.keys()
+            for term in instrument_uncert_absolute.keys()
+        ]):
+            warnings.warn(
+                'Relative and absolute uncertainty terms overlap. '
+                'uncertanties ofr each group of instruments should be specified as '
+                'either relative or absolute.'
+            )
+            return None
+        if all([
+            term not in reg_var_groups.keys()
+            for term in instrument_uncert_relative.keys()
+        ]) and all([
+            term not in reg_var_groups.keys()
+            for term in instrument_uncert_absolute.keys()
+        ]):
+            warnings.warn(
+                'None of the default instrument uncertaintites terms are in the '
+                'regression formula. Pass a dictionary of instrument uncertainties.'
+            )
+        for term, group in reg_var_groups.items():
+            if term in instrument_uncert_relative.keys():
+                abs_inst_uncerts[group] = (
+                    instrument_uncert_relative[term] / 100
+                    * self.rc[term][0]
+                )
+            elif term in instrument_uncert_absolute.keys():
+                abs_inst_uncerts[group] = instrument_uncert_absolute[term]
+            else:
+                continue
+            if show_results:
+                print('Absolute instrument uncertainty for {} = {:0.3f}'.format(
+                    term, abs_inst_uncerts[group]))
+        self.u_instrument = abs_inst_uncerts
 
     def expanded_uncert(self, grp_to_term, k=1.96):
         """

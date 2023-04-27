@@ -38,7 +38,7 @@ To run a specific test:
 pytest tests/test_CapData.py::TestCapDataEmpty::test_capdata_empty
 
 To create a test coverage report (html output) with pytest:
-pytest --cov-report html --cov=captest tests/
+pytest --cov-report html --cov=src/captest tests/
 
 pytest fixtures meas, location_and_system, nrel, pvsyst, pvsyst_irr_filter, and
 nrel_clear_sky are in the ./tests/conftest.py file.
@@ -2036,9 +2036,12 @@ class TestDataColumnsToExcel():
         assert df.iloc[0, 1] == 'inv1_power'
         os.remove(xlsx_file)
 
+
 class TestRegressionUncertainty():
-    def test_sets_sy_attribute(self, capdata_reg_result_one_coeff):
+    def test_sets_sy_attribute(self, capdata_reg_result_one_coeff, capsys):
         capdata_reg_result_one_coeff.regression_uncertainty()
+        captured = capsys.readouterr()
+        sys.stdout.write(captured.out)
         pred = capdata_reg_result_one_coeff.regression_results.get_prediction(
             capdata_reg_result_one_coeff.rc
         )
@@ -2046,6 +2049,12 @@ class TestRegressionUncertainty():
         assert capdata_reg_result_one_coeff.sy == (
             pred.se_obs[0] / pred.predicted_mean[0]
         )
+        assert len(pred.se_obs) == 1
+        assert captured.out == (
+            'The Random Standard Uncertainty of the '
+            'regression, Sy = 8.93 %\n'
+        )
+
 
 class TestGetRegressionColumnGroups():
     def test_agg_each_indpendent_reg_var(self, meas):
@@ -2071,6 +2080,7 @@ class TestGetRegressionColumnGroups():
         assert reg_column_groups['poa'] == 'irr-poa-'
         assert reg_column_groups['t_amb'] == 'temp-amb-'
         assert reg_column_groups['w_vel'] == 'wind--'
+
 
 class TestSpatialUncert():
     def test_output_if_only_one_column_per_group(self, capdata_spatial, capsys):
@@ -2122,6 +2132,63 @@ class TestSpatialUncert():
             'b_spatial for irr_poa = 4.179\n'
             'b_spatial for temp_amb = 0.571\n'
         )
+
+
+class TestInstrumentUncert():
+    def test_result(self, capdata_spatial, capsys):
+        capdata_spatial.rc = pd.DataFrame(
+            {'poa': 850, 't_amb': 18, 'w_vel': 2}, index=[0]
+        )
+        capdata_spatial.regression_cols = {
+            'power': 'power', 'poa': 'irr_poa', 't_amb': 'temp_amb', 'w_vel': 'wind'
+        }
+        capdata_spatial.instrument_uncert()
+        captured = capsys.readouterr()
+        sys.stdout.write(captured.out)
+        for group in ['irr_poa', 'temp_amb', 'wind']:
+            assert group in capdata_spatial.u_instrument.keys()
+        assert capdata_spatial.u_instrument['irr_poa'] == pytest.approx(25.5)
+        assert capdata_spatial.u_instrument['temp_amb'] == pytest.approx(0.2)
+        assert capdata_spatial.u_instrument['wind'] == pytest.approx(0.3)
+        assert captured.out == (
+            'Absolute instrument uncertainty for poa = 25.500\n'
+            'Absolute instrument uncertainty for t_amb = 0.200\n'
+            'Absolute instrument uncertainty for w_vel = 0.300\n'
+        )
+
+    def test_result_two_of_three_default_instruments(self, capdata_spatial):
+        capdata_spatial.rc = pd.DataFrame({'poa': 850, 't_amb': 18}, index=[0])
+        capdata_spatial.regression_formula = 'power ~ poa + t_amb'
+        capdata_spatial.instrument_uncert()
+        for group in ['irr_poa', 'temp_amb']:
+            assert group in capdata_spatial.u_instrument.keys()
+        assert capdata_spatial.u_instrument['irr_poa'] == pytest.approx(25.5)
+        assert capdata_spatial.u_instrument['temp_amb'] == pytest.approx(0.2)
+
+    def test_relative_and_abs_uncerts_overlap(self, capdata_spatial):
+        with pytest.warns(
+            UserWarning,
+            match=(
+                'Relative and absolute uncertainty terms overlap. '
+                'uncertanties ofr each group of instruments should be specified as '
+                'either relative or absolute.'
+            )
+        ):
+            capdata_spatial.instrument_uncert(
+                instrument_uncert_relative={'poa': 2.5, 't_amb': 0.2},
+                instrument_uncert_absolute={'t_amb': 0.2, 'w_vel': 0.3},
+            )
+
+    def test_result_no_default_uncert_in_fml(self, capdata_spatial):
+        """
+        Should warn if no default uncert terms are in the regression formula."""
+        capdata_spatial.rc = pd.DataFrame({'poa_front': 850, 'poa_rear': 68}, index=[0])
+        capdata_spatial.regression_formula = 'power ~ poa_front + poa_rear'
+        capdata_spatial.regression_cols = {
+            'power': 'power', 'poa_front': 'irr_poa', 'poa_rear': 'irr_poa_rear'
+        }
+        with pytest.warns(UserWarning):
+            capdata_spatial.instrument_uncert()
 
 
 if __name__ == '__main__':

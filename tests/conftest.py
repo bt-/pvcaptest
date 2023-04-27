@@ -188,4 +188,3 @@ def capdata_spatial():
     cd.trans_keys = list(cd.column_groups.keys())
     cd.regression_cols = {'power': 'power', 'poa': 'irr_poa', 't_amb': 'temp_amb'}
     return cd
-

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Method to calculate regression uncertainty.
 - User Guide to docs with section on uncertainty.
+- `instrument_uncert` method to calculate absolute instrument uncertainties at reporting conditions.
 
 ### Changed
 - `spatial_uncert` method does not require a list of column groups.
