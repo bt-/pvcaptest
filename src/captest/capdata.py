@@ -1491,8 +1491,9 @@ class CapData(object):
         self.filter_counts = {}
         self.rc = None
         self.regression_results = None
-        self.regression_formula = ('power ~ poa + I(poa * poa)'
-                                   '+ I(poa * t_amb) + I(poa * w_vel) - 1')
+        self.regression_formula = (
+            'power ~ poa + I(poa * poa) + I(poa * t_amb) + I(poa * w_vel) - 1'
+        )
         self.tolerance = None
         self.pre_agg_cols = None
         self.pre_agg_trans = None
@@ -3260,62 +3261,73 @@ class CapData(object):
                     term, abs_inst_uncerts[group]))
         self.u_instrument = abs_inst_uncerts
 
-    def expanded_uncert(self, grp_to_term, k=1.96):
+    def sys_standard_uncert(self, show_results=True):
         """
-        Calculate expanded uncertainty of the predicted power.
+        Calculate the systematic standard uncertainty.
 
         Adds instrument uncertainty and spatial uncertainty in quadrature and
         passes the result through the regression to calculate the
-        Systematic Standard Uncertainty, which is then added in quadrature with
-        the Random Standard Uncertainty of the regression and multiplied by the
-        k factor, `k`.
+        Systematic Standard Uncertainty.
 
+        Calculation steps:
         1. Combine by adding in quadrature the spatial and instrument uncertainties
         for each measurand.
         2. Add the absolute uncertainties from step 1 to each of the respective
         reporting conditions to determine a value for the reporting condition
         plus the uncertainty.
-        3. Calculate the predicted power using the RCs plus uncertainty three
-        times i.e. calculate for each RC plus uncertainty. For example, to
-        estimate the impact of the uncertainty of the reporting irradiance one
-        would calculate expected power using the irradiance RC plus irradiance
-        uncertainty at the reporting irradiance and the original temperature and
-        wind reporting conditions that have not had any uncertainty added to them.
+        3. Calculate the predicted power using the RCs plus uncertainty for each
+        independent regression term. For example, to estimate the impact of the
+        uncertainty of the reporting irradiance the expected power is calculated using
+        the reporting irradiance plus the absolute uncertainty of the irradiance and
+        the original (without uncertainty added) reporting condition for temperature
+        and wind.
         6. Calculate the percent difference between the three new expected power
-        values that include uncertainty of the RCs and the expected power with
-        the unmodified RC.
+        values that include uncertainty at the reporting conditions and the expected
+        power with the unmodified reporting conditions.
         7. Take the square root of the sum of the squares of those three percent
         differences to obtain the Systematic Standard Uncertainty (bY).
 
-        Expects CapData to have a instrument_uncert and spatial_uncerts
-        attributes with matching keys.
-
         Parameters
         ----------
-        grp_to_term : dict
-            Map the groups of measurement types to the term in the
-            regression formula that was regressed against an aggregated value
-            (typically mean) from that group.
-        k : numeric
-            Coverage factor.
+        show_results : bool, default True
+            Print the calculation steps as performed.
 
         Returns
         -------
-            Expanded uncertainty as a decimal value.
+        None
+            Saves the systematic standard uncertainty in the `by` attribute.
         """
-        pred = self.regression_results.get_prediction(self.rc)
-        pred_cap = pred.predicted_mean[0]
+        pred_cap = self.regression_results.get_prediction(self.rc).predicted_mean[0]
         perc_diffs = {}
-        for group, inst_uncert in self.instrument_uncert.items():
+        grp_to_term = {v: k for k, v in self._get_regression_column_groups().items()}
+        for group, inst_uncert in self.u_instrument.items():
             by_group = (inst_uncert ** 2 + self.u_spatial[group] ** 2) ** (1 / 2)
             rcs = self.rc.copy()
             rcs.loc[0, grp_to_term[group]] = rcs.loc[0, grp_to_term[group]] + by_group
             pred_cap_uncert = self.regression_results.get_prediction(rcs).predicted_mean[0]
             perc_diffs[group] = (pred_cap_uncert - pred_cap) / pred_cap
         df = pd.DataFrame(perc_diffs.values())
-        by = (df ** 2).sum().values[0] ** (1 / 2)
-        sy = pred.se_obs[0] / pred_cap
-        return (by ** 2 + sy ** 2) ** (1 / 2) * k
+        self.by = (df ** 2).sum().values[0] ** (1 / 2)
+        if show_results:
+            print('Systematic Standard Uncertainty (bY) = {:0.3f}'.format(self.by))
+
+    def expanded_uncert(self, k=1.96):
+        """
+        Calculate and report the expanded uncertainty of the predicted power.
+
+        Adds the systematic standard uncertainty in quadrature with the random standard
+        uncertainty of the regression and multiplies by the k factor, `k`.
+
+        Parameters
+        ----------
+        k : numeric, default 1.96
+            Coverage factor. The default is for a 95% confidence interval.
+
+        Returns
+        -------
+            Expanded uncertainty as a decimal value.
+        """
+        self.u_expanded = (self.by ** 2 + self.sy ** 2) ** (1 / 2) * k
 
     def get_filtering_table(self):
         """

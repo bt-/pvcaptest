@@ -108,6 +108,32 @@ where,
 
 :math:`N` = number of averaging intervals in the final regression
 
+Calculating the Systematic Standard Uncertainty
+-----------------------------------------------
+
+The ``CapData.sys_standard_uncert`` method adds instrument uncertainty and spatial
+uncertainty in quadrature and passes the result through the regression to calculate the
+Systematic Standard Uncertainty.
+
+Calculation steps:
+1. Combine by adding in quadrature the spatial and instrument uncertainties
+for each measurand.
+2. Add the absolute uncertainties from step 1 to each of the respective
+reporting conditions to determine a value for the reporting condition
+plus the uncertainty.
+3. Calculate the predicted power using the RCs plus uncertainty for each
+independent regression term. For example, to estimate the impact of the
+uncertainty of the reporting irradiance the expected power is calculated using
+the reporting irradiance plus the absolute uncertainty of the irradiance and
+the original (without uncertainty added) reporting condition for temperature
+and wind.
+6. Calculate the percent difference between the three new expected power
+values that include uncertainty at the reporting conditions and the expected
+power with the unmodified reporting conditions.
+7. Take the square root of the sum of the squares of those three percent
+differences to obtain the Systematic Standard Uncertainty (:math:`b_{Y}`).
+
+
 References
 ----------
 .. [1] "Test Uncertainty, Performance Test Codes", ASME PTC 19.1-2013, 8-4 Spatial

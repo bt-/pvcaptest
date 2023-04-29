@@ -3,6 +3,7 @@ import copy
 import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
+from statsmodels.regression.linear_model import RegressionResults
 from captest import capdata as pvc
 from captest import util
 from captest import columngroups as cg
@@ -187,4 +188,43 @@ def capdata_spatial():
     }
     cd.trans_keys = list(cd.column_groups.keys())
     cd.regression_cols = {'power': 'power', 'poa': 'irr_poa', 't_amb': 'temp_amb'}
+    return cd
+
+
+@pytest.fixture
+def reg_results():
+    reg_result = RegressionResults(
+        smf.ols(
+            formula='power ~ poa + I(poa * poa) + I(poa * t_amb) + I(poa * w_vel) - 1',
+            data=pd.DataFrame([[1, 2, 4, 5],], columns=['power', 'poa', 't_amb', 'w_vel'])
+        ),
+        np.array([7_757.93217, -0.46099, -50.70823, 13.14250]),
+        np.array([
+            [0.01, 0.01, 0.01, 0.01],
+            [0.01, 0.01, 0.01, 0.01],
+            [0.01, 0.01, 0.01, 0.01],
+            [0.01, 0.01, 0.01, 0.01],
+        ])
+    )
+    return reg_result
+
+
+@pytest.fixture
+def cd_reg_results(reg_results):
+    cd = pvc.CapData('meas')
+    cd.regression_cols = {
+        'power': 'power', 'poa': 'irr_poa', 't_amb': 'temp_amb', 'w_vel': 'wind_speed'
+    }
+    cd.regression_results = reg_results
+    cd.rc = pd.DataFrame({'poa': 768.6135, 't_amb': 24.108, 'w_vel': 1.99}, index=[0])
+    cd.u_spatial = {
+        'irr_poa': 6.1,
+        'temp_amb': 0.5,
+        'wind_speed': 0.6,
+    }
+    cd.u_instrument = {
+        'irr_poa': 25.5,
+        'temp_amb': 0.2,
+        'wind_speed': 0.3,
+    }
     return cd

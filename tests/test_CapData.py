@@ -2109,7 +2109,7 @@ class TestSpatialUncert():
         """
         Check results of spatial uncertainty calculations on dummy data.
 
-        Expected results calculated in a Google sheet, woksheet "spatial_uncert":
+        Expected results calculated in a Google sheet, worksheet "spatial_uncert":
         https://docs.google.com/spreadsheets/d/1-R0Vh1ZQcmaqi5mUtkpTr2uKoKsNmhvMYMlZ6b0G660/edit?usp=sharing
         """
         capdata_spatial.agg_sensors(agg_map={'irr_poa': 'mean', 'temp_amb': 'mean'})
@@ -2121,7 +2121,7 @@ class TestSpatialUncert():
         """
         Check results of spatial uncertainty calculations on dummy data.
 
-        Expected results calculated in a Google sheet, woksheet "spatial_uncert":
+        Expected results calculated in a Google sheet, worksheet "spatial_uncert":
         https://docs.google.com/spreadsheets/d/1-R0Vh1ZQcmaqi5mUtkpTr2uKoKsNmhvMYMlZ6b0G660/edit?usp=sharing        
         """
         capdata_spatial.agg_sensors(agg_map={'irr_poa': 'mean', 'temp_amb': 'mean'})
@@ -2189,6 +2189,22 @@ class TestInstrumentUncert():
         }
         with pytest.warns(UserWarning):
             capdata_spatial.instrument_uncert()
+
+
+class TestExpandedUncert():
+    def test_fake_reg_results(self, cd_reg_results, capsys):
+        """
+        Check results of systematic standard uncertainty with faked regression results.
+
+        Expected results calculated in a Google sheet, worksheet "sys_standard_uncert":
+        https://docs.google.com/spreadsheets/d/1-R0Vh1ZQcmaqi5mUtkpTr2uKoKsNmhvMYMlZ6b0G660/edit?usp=sharing
+        """
+        cd_reg_results.sys_standard_uncert()
+        captured = capsys.readouterr()
+        sys.stdout.write(captured.out)
+        assert isinstance(cd_reg_results.by, float)
+        assert cd_reg_results.by == pytest.approx(0.03243020666)
+        assert captured.out == ('Systematic Standard Uncertainty (bY) = 0.032\n')
 
 
 if __name__ == '__main__':
