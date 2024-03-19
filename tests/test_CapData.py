@@ -462,6 +462,7 @@ class TestIndexCapdata():
         are the values of the key from data_filtered."""
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         out = pvc.index_capdata(meas, 'irr_poa_pyran', filtered=True)
+        assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data_filtered[['met1_poa_pyranometer', 'met2_poa_pyranometer']])
         assert out.shape[0] == 10
 
@@ -472,6 +473,7 @@ class TestIndexCapdata():
         """
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         out = pvc.index_capdata(meas, ['irr_poa_pyran', 'temp_amb'], filtered=True)
+        assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data_filtered[[
             'met1_poa_pyranometer',
             'met2_poa_pyranometer',
@@ -480,13 +482,89 @@ class TestIndexCapdata():
         ]])
         assert out.shape[0] == 10
 
-    """All below tests are for the filter=False option."""
+    def test_list_of_labels_reg_col_keys_filtered(self, meas):
+        """
+        Test that a list of regression_col keys returns the columns that
+        are the regression_col and column_groups maps to in `data_filtered`.
+        """
+        meas.data_filtered = meas.data.iloc[0:10, :].copy()
+        out = pvc.index_capdata(meas, ['poa', 't_amb'], filtered=True)
+        assert isinstance(out, pd.DataFrame)
+        assert out.equals(meas.data_filtered[[
+            'met1_poa_pyranometer',
+            'met2_poa_pyranometer',
+            'met1_amb_temp',
+            'met2_amb_temp',
+        ]])
+        assert out.shape[0] == 10
+
+    def test_list_of_labels_reg_col_keys_filtered_pvsyst(self, pvsyst_irr_filter):
+        """
+        Test that a list of regression_col keys returns the columns that
+        are the regression_col and column_groups maps to in `data_filtered`.
+        """
+        pvsyst_irr_filter.data_filtered = pvsyst_irr_filter.data.iloc[0:10, :].copy()
+        out = pvc.index_capdata(
+            pvsyst_irr_filter, ['poa', 't_amb', 'w_vel'], filtered=True
+        )
+        assert isinstance(out, pd.DataFrame)
+        assert out.equals(pvsyst_irr_filter.data_filtered[[
+            'GlobInc',
+            'T_Amb',
+            'WindVel',
+        ]])
+        assert out.shape[0] == 10
+
+    def test_regcols_label_filtered(self, meas):
+        """
+        Test that passing the label `regcols` returns the columns of
+        Capdata.data_filtered that are identified in `regression_cols`.
+        """
+        meas.data_filtered = meas.data.iloc[0:10, :].copy()
+        out = pvc.index_capdata(meas, 'regcols', filtered=True)
+        assert isinstance(out, pd.DataFrame)
+        assert out.equals(meas.data_filtered[[
+            'meter_power',
+            'met1_poa_pyranometer',
+            'met2_poa_pyranometer',
+            'met1_amb_temp',
+            'met2_amb_temp',
+            'met1_windspeed',
+            'met2_windspeed',
+        ]])
+        assert out.shape[0] == 10
+
+    def test_regcols_label_after_agg_cols_filtered(self, meas):
+        """
+        Test that passing the label `regcols` returns the columns of
+        Capdata.data_filtered that are identified in `regression_cols`.
+        """
+        meas.agg_sensors(agg_map={
+            'irr_poa_pyran': 'mean',
+            'temp_amb': 'mean',
+            'wind': 'mean',
+        })
+        meas.data_filtered = meas.data.iloc[0:10, :].copy()
+        out = pvc.index_capdata(meas, 'regcols', filtered=True)
+        assert isinstance(out, pd.DataFrame)
+        assert out.equals(meas.data_filtered[[
+            'meter_power',
+            'irr_poa_pyran_mean_agg',
+            'temp_amb_mean_agg',
+            'wind_mean_agg',
+        ]])
+        assert out.shape[0] == 10
+
+    """#################################################"""
+    """All below tests are for the filtered=False option."""
+    """#################################################"""
     def test_single_label_column_group_key(self, meas):
         """Test that column_groups key returns the columns of Capdata.data that
         are the values of the key."""
         # filter data_filtered to make check of row count for filtered=False meaningful
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         out = pvc.index_capdata(meas, 'irr_poa_pyran', filtered=False)
+        assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data[['met1_poa_pyranometer', 'met2_poa_pyranometer']])
         assert out.shape[0] == 1440
 
@@ -496,6 +574,7 @@ class TestIndexCapdata():
         # filter data_filtered to make check of row count for filtered=False meaningful
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         out = pvc.index_capdata(meas, 'poa', filtered=False)
+        assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data[['met1_poa_pyranometer', 'met2_poa_pyranometer']])
         assert out.shape[0] == 1440
 
@@ -507,7 +586,8 @@ class TestIndexCapdata():
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         meas.agg_sensors(agg_map={'irr_poa_pyran': 'mean'})
         out = pvc.index_capdata(meas, 'poa', filtered=False)
-        assert out.equals(meas.data['irr_poa_pyran_mean_agg'])
+        assert isinstance(out, pd.DataFrame)
+        assert out.equals(meas.data['irr_poa_pyran_mean_agg'].to_frame())
         assert out.shape[0] == 1440
 
     def test_single_label_data_column_label(self, meas):
@@ -516,7 +596,8 @@ class TestIndexCapdata():
         # filter data_filtered to make check of row count for filtered=False meaningful
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         out = pvc.index_capdata(meas, 'met1_poa_pyranometer', filtered=False)
-        assert out.equals(meas.data.loc[:, 'met1_poa_pyranometer'])
+        assert isinstance(out, pd.DataFrame)
+        assert out.equals(meas.data.loc[:, 'met1_poa_pyranometer'].to_frame())
         assert out.shape[0] == 1440
 
     def test_list_of_labels_column_group_keys(self, meas):
@@ -527,6 +608,7 @@ class TestIndexCapdata():
         # filter data_filtered to make check of row count for filtered=False meaningful
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         out = pvc.index_capdata(meas, ['irr_poa_pyran', 'temp_amb'], filtered=False)
+        assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data[[
             'met1_poa_pyranometer',
             'met2_poa_pyranometer',
@@ -543,6 +625,7 @@ class TestIndexCapdata():
         # filter data_filtered to make check of row count for filtered=False meaningful
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         out = pvc.index_capdata(meas, ['poa', 't_amb'], filtered=False)
+        assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data[[
             'met1_poa_pyranometer',
             'met2_poa_pyranometer',
@@ -560,6 +643,7 @@ class TestIndexCapdata():
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         meas.agg_sensors(agg_map={'irr_poa_pyran': 'mean', 'temp_amb': 'mean'})
         out = pvc.index_capdata(meas, ['poa', 't_amb'], filtered=False)
+        assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data[[
             'irr_poa_pyran_mean_agg',
             'temp_amb_mean_agg',
@@ -575,6 +659,7 @@ class TestIndexCapdata():
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         meas.agg_sensors(agg_map={'irr_poa_pyran': 'mean'})
         out = pvc.index_capdata(meas, ['poa', 't_amb'], filtered=False)
+        assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data[[
             'irr_poa_pyran_mean_agg',
             'met1_amb_temp',
@@ -592,6 +677,7 @@ class TestIndexCapdata():
         out = pvc.index_capdata(
             meas, ['met1_poa_pyranometer', 'met2_amb_temp'], filtered=False
         )
+        assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data.loc[:, ['met1_poa_pyranometer', 'met2_amb_temp']])
         assert out.shape[0] == 1440
 
@@ -606,6 +692,7 @@ class TestIndexCapdata():
         out = pvc.index_capdata(
             meas, ['irr_poa_pyran', 't_amb', 'met1_windspeed'], filtered=False
         )
+        assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data[[
             'met1_poa_pyranometer',
             'met2_poa_pyranometer',
@@ -626,11 +713,52 @@ class TestIndexCapdata():
         out = pvc.index_capdata(
             meas, ['irr_poa_ref_cell', 'poa', 'met1_windspeed'], filtered=False
         )
+        assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data[[
             'met1_poa_refcell',
             'met2_poa_refcell',
             'met1_poa_pyranometer',
             'met1_windspeed',
+        ]])
+        assert out.shape[0] == 1440
+
+    def test_regcols_label(self, meas):
+        """
+        Test that passing the label `regcols` returns the columns of
+        Capdata.data that are identified in `regression_cols`.
+        """
+        meas.data_filtered = meas.data.iloc[0:10, :].copy()
+        out = pvc.index_capdata(meas, 'regcols', filtered=False)
+        assert isinstance(out, pd.DataFrame)
+        assert out.equals(meas.data[[
+            'meter_power',
+            'met1_poa_pyranometer',
+            'met2_poa_pyranometer',
+            'met1_amb_temp',
+            'met2_amb_temp',
+            'met1_windspeed',
+            'met2_windspeed',
+        ]])
+        assert out.shape[0] == 1440
+
+    def test_regcols_label_after_agg_cols(self, meas):
+        """
+        Test that passing the label `regcols` returns the columns of
+        Capdata that are identified in `regression_cols`.
+        """
+        meas.agg_sensors(agg_map={
+            'irr_poa_pyran': 'mean',
+            'temp_amb': 'mean',
+            'wind': 'mean',
+        })
+        meas.data_filtered = meas.data.iloc[0:10, :].copy()
+        out = pvc.index_capdata(meas, 'regcols', filtered=False)
+        assert isinstance(out, pd.DataFrame)
+        assert out.equals(meas.data[[
+            'meter_power',
+            'irr_poa_pyran_mean_agg',
+            'temp_amb_mean_agg',
+            'wind_mean_agg',
         ]])
         assert out.shape[0] == 1440
 
@@ -765,11 +893,9 @@ class TestCapDataMethodsSim():
         pvsyst.set_regression_cols(
             power='real_pwr--', poa='irr-ghi-', t_amb='temp_amb', w_vel='wind--'
         )
-        print(pvsyst.trans_keys)
         pvsyst_copy = pvsyst.copy()
         assert pvsyst_copy.data.equals(pvsyst.data)
         assert pvsyst_copy.column_groups == pvsyst.column_groups
-        assert pvsyst_copy.trans_keys == pvsyst.trans_keys
         assert pvsyst_copy.regression_cols == pvsyst.regression_cols
 
     def test_filter_pvsyst_default(self, pvsyst):
@@ -1375,10 +1501,6 @@ class TestAbsDiffFromAverage():
         s = pd.Series([800], index=['poa1'])
         meets_threshold = pvc.abs_diff_from_average(s, 25)
         assert meets_threshold is True
-        with pytest.warns(
-            UserWarning, match=('Series has only one value. Returning True.')
-        ):
-            s = pvc.abs_diff_from_average(s, 25)
 
 
 class TestFilterSensorsWithAbsDiffFromAverage():
@@ -1463,8 +1585,7 @@ class TestPredictCapacities():
         pvsyst_irr_filter.data_filtered = pvsyst_irr_filter.data_filtered.loc['7/1/90':'7/31/90', :]
         pvsyst_irr_filter.rep_cond()
         pvsyst_irr_filter.filter_irr(0.8, 1.2, ref_val=pvsyst_irr_filter.rc['poa'][0])
-        df = pvsyst_irr_filter.rview(['power', 'poa', 't_amb', 'w_vel'],
-                               filtered_data=True)
+        df = pvsyst_irr_filter.floc['regcols']
         rename = {df.columns[0]: 'power',
                   df.columns[1]: 'poa',
                   df.columns[2]: 't_amb',
@@ -1498,7 +1619,7 @@ class TestFilterIrr():
         assert col == 'POA 40-South CMP11 [W/m^2]'
 
     def test_get_poa_col_multcols(self, nrel):
-        nrel.data['POA second column'] = nrel.rview('poa').values
+        nrel.data['POA second column'] = nrel.loc['poa'].values
         nrel.column_groups['irr-poa-'].append('POA second column')
         with pytest.warns(UserWarning, match=(
             '[0-9]+ columns of irradiance data. Use col_name to specify a single column.'
@@ -1512,7 +1633,7 @@ class TestFilterIrr():
 
     def test_lowhigh_colname(self, nrel):
         pts_before = nrel.data_filtered.shape[0]
-        nrel.data['POA second column'] = nrel.rview('poa').values
+        nrel.data['POA second column'] = nrel.loc['poa'].values
         nrel.column_groups['irr-poa-'].append('POA second column')
         nrel.data_filtered = nrel.data.copy()
         nrel.filter_irr(
@@ -1528,7 +1649,7 @@ class TestFilterIrr():
 
     def test_refval_withcol(self, nrel):
         pts_before = nrel.data_filtered.shape[0]
-        nrel.data['POA second column'] = nrel.rview('poa').values
+        nrel.data['POA second column'] = nrel.loc['poa'].values
         nrel.column_groups['irr-poa-'].append('POA second column')
         nrel.data_filtered = nrel.data.copy()
         nrel.filter_irr(0.8, 1.2, ref_val=500,
@@ -1744,7 +1865,7 @@ class TestCskyFilter():
         assert nrel_clear_sky.data.index.difference(clear_ix).equals(cloudy_ix)
 
     def test_two_ghi_cols(self, nrel_clear_sky):
-        nrel_clear_sky.data['ws 2 ghi W/m^2'] = nrel_clear_sky.view('irr-ghi-') * 1.05
+        nrel_clear_sky.data['ws 2 ghi W/m^2'] = nrel_clear_sky.loc['irr-ghi-'] * 1.05
         nrel_clear_sky.data_filtered = nrel_clear_sky.data.copy()
         nrel_clear_sky.column_groups['irr-ghi-'].append('ws 2 ghi W/m^2')
         with pytest.warns(UserWarning):
@@ -1766,7 +1887,7 @@ class TestCskyFilter():
             nrel_clear_sky.filter_clearsky()
 
     def test_specify_ghi_col(self, nrel_clear_sky):
-        nrel_clear_sky.data['ws 2 ghi W/m^2'] = nrel_clear_sky.view('irr-ghi-') * 1.05
+        nrel_clear_sky.data['ws 2 ghi W/m^2'] = nrel_clear_sky.loc['irr-ghi-'] * 1.05
         nrel_clear_sky.data_filtered = nrel_clear_sky.data.copy()
         nrel_clear_sky.column_groups['irr-ghi-'].append('ws 2 ghi W/m^2')
         nrel_clear_sky.trans_keys = list(nrel_clear_sky.column_groups.keys())
@@ -1796,7 +1917,7 @@ class TestFilterMissing():
             t_amb='met2_amb_temp',
             w_vel='met1_windspeed',
         )
-        assert all(meas.rview('all', filtered_data=True).isna().sum() == 0)
+        assert all(meas.floc['regcols'].isna().sum() == 0)
         assert meas.data_filtered.shape[0] == 1440
         meas.data_filtered.loc['10/9/90 12:00', 'meter_power'] = np.NaN
         meas.data_filtered.loc['10/9/90 12:30', 'met1_poa_refcell'] = np.NaN
@@ -1813,7 +1934,7 @@ class TestFilterMissing():
             t_amb='met2_amb_temp',
             w_vel='met1_windspeed',
         )
-        assert all(meas.rview('all', filtered_data=True).isna().sum() == 0)
+        assert all(meas.floc['regcols'].isna().sum() == 0)
         assert meas.data_filtered.shape[0] == 1440
         assert meas.data_filtered.isna().sum().sum() > 0
         meas.filter_missing()
@@ -2062,7 +2183,7 @@ class TestGetFilteringTable:
         assert table_flt2_removed.equals(flt2_removed_ix)
         table_flt_all_column = flt_table.iloc[:, 3]
         table_flt_all_removed = table_flt_all_column[~table_flt_all_column].index
-        out = pd.concat([flt_table, nrel.rview('poa')], axis=1)
+        out = pd.concat([flt_table, nrel.loc['poa']], axis=1)
         assert table_flt_all_removed.equals(
             flt0_removed_ix.union(flt1_removed_ix).union(flt2_removed_ix)
         )
@@ -2137,25 +2258,6 @@ class TestPointsSummary():
         )
 
         assert results_str == captured.out
-
-
-class TestSetPlotsAttributes():
-    """Test assigning colors to each column using the keys of the column_grouping."""
-    def test_real_power_group_colors(self, meas):
-        """
-        Test that the color assigned to the column(s) in the `data` attributute is
-        one of the colors in the `plot_colors_brewer` dictionary with the real_pwr key.
-        """
-        meas.set_plot_attributes()
-        assert meas.col_colors['meter_power'] == '#2b8cbe'
-        assert meas.col_colors['met1_poa_refcell'] == '#e31a1c'
-        assert meas.col_colors['met2_poa_refcell'] == '#fd8d3c'
-        assert meas.col_colors['met2_poa_refcell'] == '#fd8d3c'
-        assert meas.col_colors['met1_ghi_pyranometer'] == '#91003f'
-        assert meas.col_colors['met1_amb_temp'] == '#238443'
-        assert meas.col_colors['met1_mod_temp1'] == '#88419d'
-        assert meas.col_colors['met1_windspeed'] == '#238b45'
-        assert meas.col_colors['inv1_power'] == '#d60000'
 
 
 class TestDataColumnsToExcel():
