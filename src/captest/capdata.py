@@ -1388,6 +1388,126 @@ def overlay_scatters(measured, expected, expected_label='PVsyst'):
     return overlay
 
 
+def combine_overlapping_columns(cd1, cd2):
+    """
+    Label and concat columns with the samename of two CapData objects.
+
+    Parameters
+    ----------
+    cd1 : CapData
+        The first CapData object to combine.
+    cd2 : CapData
+        The second CapData object to combine.
+
+    Returns
+    -------
+    tuple
+        A tuple containing the following:
+        - A pandas Index of columns that are present in both CapData objects.
+        - A pandas Index of columns that are present in both CapData objects
+          and have the same values.
+        - A pandas Index of columns that are present in both CapData objects
+          and have different values.
+        - A DataFrame containing the combined data from both CapData objects.
+    """
+    cols_both = cd1.data.columns.intersection(cd2.data.columns)
+    data_compare = cd1.loc[list(cols_both)].compare(
+        cd2.loc[list(cols_both)],
+        result_names=(cd1.name, cd2.name),
+        keep_shape=False
+    )
+    cols_diff = pd.Index(set(list(data_compare.columns.get_level_values(0))))
+    data_both = pd.concat([
+        cd1.loc[list(cols_diff)].rename(columns=(lambda x: x + '_' + cd1.name)),
+        cd2.loc[list(cols_diff)].rename(columns=(lambda x: x + '_' + cd2.name)),
+    ], axis=1).sort_index(axis=1)
+    cols_same = cols_both.difference(cols_diff)
+    return (cols_both, cols_same, pd.Index(set(cols_diff)), data_both)
+
+
+def combine_dfs(cd1, cd2, cols_both, cols_same, data_both):
+    """
+    Combine the data of two CapData objects into a single DataFrame.
+
+    Inputs obtained from the combine_overlapping_columns function.
+
+    Parameters
+    ----------
+    cd1 : CapData
+        The first CapData object to combine.
+    cd2 : CapData
+        The second CapData object to combine.
+    cols_both : Index
+        A pandas Index of columns that are present in both CapData objects.
+    cols_same : Index
+        A pandas Index of columns that are present in both CapData objects
+        and have the same values.
+    data_both : DataFrame
+        A DataFrame containing the combined data from both CapData objects.
+    """
+    cd1_only_cols = cd1.data.columns.difference(cols_both)
+    cd2_only_cols = cd2.data.columns.difference(cols_both)
+    combined = pd.concat([
+        data_both,
+        cd1.loc[list(cd1_only_cols)],
+        cd2.loc[list(cd2_only_cols)],
+        cd1.loc[list(cols_same)],
+    ], axis=1)
+    return combined
+
+
+def merge_pvsysts(cd1, cd2, agg_map=None):
+    """
+    Merge together two capdata objects holding PVsyst results.
+
+    Joins the data and column_groups of the two CapData objects into a
+    single CapData object and uses the `agg_map` to combine output
+    variables from each.
+
+    Expects the CapData `name` attribute to be set and will use it to
+    label the columns in the returned CapData object.
+
+    For output variables that are the same a single column without a
+    label will be included in the returned CapData object.
+
+    Parameters
+    ----------
+    cd1 : CapData
+        The first CapData object holding PVsyst results.
+    cd2 : CapData
+        The second CapData object holding PVsyst results.
+    agg_map : dict
+        Mapping of `column_groups` keys to functions to use to aggregate. Uses `CapData.agg_sensors`
+        internally. See that functions docstring for additional details.
+
+    Returns
+    -------
+    CapData
+    """
+    cd_joined = cd1.copy()
+    cols_both, cols_same, cols_diff, data_both = combine_overlapping_columns(cd1, cd2)
+    combined = combine_dfs(cd1, cd2, cols_both, cols_same, data_both)
+    cd_joined.data = combined.copy()
+    cd_joined.reset_filter()
+
+    if len(cd1.column_groups.keys()) > len(cd2.column_groups.keys()):
+        cd_longer = cd1
+        cd_shorter = cd2
+    else:
+        cd_longer = cd2
+        cd_shorter = cd1
+    combined_column_groups = {}
+    for grp, cols_in_grp in cd_longer.column_groups.items():
+        for c in cols_in_grp:
+            if c in cols_diff:
+                combined_column_groups[grp] = [c + '_' + cd1.name, c + '_' + cd2.name]
+            else:
+                combined_column_groups[grp] = cols_in_grp
+    cd_joined.column_groups = ct.columngroups.ColumnGroups(combined_column_groups)
+    cd_joined.agg_sensors(agg_map=agg_map)
+    return cd_joined
+
+
 def index_capdata(capdata, label, filtered=True):
     """
     Like Dataframe.loc but for CapData objects.
