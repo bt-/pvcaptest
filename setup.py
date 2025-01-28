@@ -26,7 +26,7 @@ INSTALL_REQUIRES=[
 ]
 
 EXTRAS_REQUIRE={
-    'optional': ['holoviews>=1.14.8', 'panel', 'pvlib>=0.9.0', 'openpyxl', ],
+    'optional': ['holoviews>=1.14.8', 'panel', 'pvlib>=0.9.0', 'openpyxl', 's3path', 's3fs'],
 }
 EXTRAS_REQUIRE['test'] = EXTRAS_REQUIRE['optional'] + [
     'coveralls',
