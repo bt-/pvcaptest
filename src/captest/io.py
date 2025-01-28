@@ -267,11 +267,14 @@ class DataLoader:
 
     def __setattr__(self, key, value):
         if key == "path":
+            if not isinstance(value, str):
+                value = str(value)
             if value.startswith("s3://"):
                 value = S3Path(value.replace("s3://", "/"))
                 self.path_s3 = True
             else:
                 value = Path(value)
+                self.path_s3 = False
         super().__setattr__(key, value)
 
     def set_files_to_load(self, extension="csv"):
@@ -364,7 +367,7 @@ class DataLoader:
         data = data.apply(pd.to_numeric, errors="coerce")
         return data
 
-    def load(self, extension="csv", verbose=True, print_errors=False, **kwargs):
+    def load(self, extension="csv", verbose=True, raise_errors=False, **kwargs):
         """
         Load file(s) of timeseries data from SCADA / DAS systems.
 
@@ -393,7 +396,7 @@ class DataLoader:
             it was loaded or states it failed to load. Is only relevant if `path` is
             set to a directory not a file. Set to False to not print out any file
             loading status.
-        print_errors : bool, default False
+        raise_errors : bool, default False
             Set to true to print error if file fails to load.
         **kwargs
             Are passed through to the file_reader callable, which by default will pass
@@ -437,8 +440,8 @@ class DataLoader:
                         '  meas.data_loader.file_reader(meas.data_loader'
                         '.failed_to_load[{}])'.format(failed_to_load_count)
                     )
-                    if print_errors:
-                        print(err)
+                    if raise_errors:
+                        raise err
                     failed_to_load_count += 1
                     continue
             if len(self.loaded_files) == 0:

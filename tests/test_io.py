@@ -634,11 +634,20 @@ class TestDataLoader:
                 ),
             ).to_csv(csv_path)
         dl = DataLoader(tmp_path)
-        dl.load()
+        dl.load(raise_errors=True)
         # print(dl.data.info())
         print(dl.data)
         assert isinstance(dl.data, pd.DataFrame)
         assert dl.data.shape == (60, 2)
+    
+    def test_load_all_files_from_s3_bucket(self):
+        """
+        Should create a test that mocks AWS resources to test DataLoader.load use
+        of io.file_reader with csv files stored in an S3 bucket.
+        
+        Have tested against actual files and worked as expected.
+        """
+        pass
 
     def test_load_all_files_in_directory_one_fails_to_load(self, tmp_path, capsys):
         """
@@ -671,12 +680,11 @@ class TestDataLoader:
                     writer.writerow(r)
         print(tmp_path)
         dl = DataLoader(tmp_path)
-        dl.load(print_errors=True)
+        dl.load(raise_errors=False)
         captured = capsys.readouterr()
         assert isinstance(dl.data, pd.DataFrame)
         assert len(dl.failed_to_load) == 1
         assert dl.failed_to_load[0] == tmp_path / 'file_1.csv'
-        assert 'Error tokenizing data' in captured.out
         assert 'trying to load' in captured.out
         assert '**FAILED to load' in captured.out
 
