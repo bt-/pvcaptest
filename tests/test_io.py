@@ -1,17 +1,13 @@
 import os
 import csv
-import shutil
 from io import StringIO
-import collections
 import unittest
 import pytest
-import warnings
-import pytz
 from pathlib import Path
 import numpy as np
 import pandas as pd
+from s3path import S3Path
 
-from captest.io import file_reader
 
 from captest import capdata as pvc
 from captest import util
@@ -403,6 +399,19 @@ class TestDataLoader:
         dl = DataLoader("./data/data_for_yyyy-mm-dd.csv")
         assert isinstance(dl.path, Path)
         assert dl.path == Path("./data/data_for_yyyy-mm-dd.csv")
+    
+    def test_s3_path_to_dir(self):
+        """
+        Checks that paths beginning with 's3://' are converted to S3Path objects.
+        Checks that the 's3://' prefix is replaced with '/'.
+        Checks that flag is set to indicate that the path is an S3 path.
+        Flag is used to add 's3://' prefix back to path when passing to file_reader
+        which uses pd.read_csv.
+        """
+        dl = DataLoader("s3://bucket/data/")
+        assert isinstance(dl.path, S3Path)
+        assert dl.path == S3Path("/bucket/data")
+        assert dl.path_s3
 
     def test_set_files_to_load(self, tmp_path):
         """
