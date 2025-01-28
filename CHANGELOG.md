@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 [Unreleased]
+### Added
+- `load_data` can be used with the default `file_reader` to load csv files from an S3 bucket. Requires new optional
+packages s3fs and s3path.
 
 [0.13.1]: https://github.com/pvcaptest/pvcaptest/compare/v0.13.0...v0.13.1
 ## [0.13.1] - 2024-06-05
