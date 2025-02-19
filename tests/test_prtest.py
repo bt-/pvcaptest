@@ -1,8 +1,4 @@
-import os
-import collections
-import unittest
 import pytest
-import pytz
 import numpy as np
 import pandas as pd
 
@@ -230,6 +226,7 @@ class TestPerfRatio:
         assert isinstance(perf_ratio.timestep[1], str)
         assert perf_ratio.dc_nameplate == dc_nameplate
         assert isinstance(perf_ratio.results_data, pd.DataFrame)
+        assert perf_ratio.pr == pytest.approx(0.8030, rel=1e-2)
 
     def test_simple_pr_hourly_unit_adj(self):
         """Test a short series of data for a hypothetical system.
@@ -251,6 +248,7 @@ class TestPerfRatio:
         assert isinstance(perf_ratio.timestep[1], str)
         assert perf_ratio.dc_nameplate == dc_nameplate
         assert isinstance(perf_ratio.results_data, pd.DataFrame)
+        assert perf_ratio.pr == pytest.approx(0.8030, rel=1e-2)
 
     def test_simple_pr_5min(self):
         """Test a short series of data for a hypothetical system.
@@ -273,6 +271,7 @@ class TestPerfRatio:
         assert isinstance(perf_ratio.timestep[1], str)
         assert perf_ratio.dc_nameplate == dc_nameplate
         assert isinstance(perf_ratio.results_data, pd.DataFrame)
+        assert perf_ratio.pr == pytest.approx(0.8030, rel=1e-2)
 
     def test_simple_pr_hourly_int_avail(self):
         """Test a short series of data for a hypothetical system.
