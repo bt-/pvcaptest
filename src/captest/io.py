@@ -379,7 +379,7 @@ class DataLoader:
         data = data.apply(pd.to_numeric, errors="coerce")
         return data
 
-    def load(self, extension="csv", verbose=True, raise_errors=False, skip_dir_load=False, **kwargs):
+    def load(self, extension="csv", summary=True, verbose=False, raise_errors=False, skip_dir_load=False, **kwargs):
         """
         Load file(s) of timeseries data from SCADA / DAS systems.
 
@@ -403,11 +403,14 @@ class DataLoader:
             Change the extension to allow loading different filetypes. Must also set
             the `file_reader` attribute to a function that will read that type of file.
             Do not include a period ".".
-        verbose : bool, default True
+        summary : bool, default True
             By default prints path of each file attempted to load and then confirmation
             it was loaded or states it failed to load. Is only relevant if `path` is
             set to a directory not a file. Set to False to not print out any file
             loading status.
+        verbose : bool, default False
+            Prints same output as if summary where True (sets summary True) and prints
+            details of reindexing each file after loading.
         raise_errors : bool, default False
             Set to true to print error if file fails to load.
         skip_dir_load : bool, default False
@@ -423,6 +426,8 @@ class DataLoader:
         None
             Resulting DataFrame of data is stored to the `data` attribute.
         """
+        if verbose:
+            summary = True
         if self.path.is_file():
             self.data = self.file_reader(self.path, **kwargs)
         elif self.path.is_dir() and skip_dir_load:
@@ -434,7 +439,7 @@ class DataLoader:
             failed_to_load_count = 0
             for file in self.files_to_load:
                 try:
-                    if verbose:
+                    if summary:
                         if self.path_s3:
                             print('trying to load s3://{}'.format(file))
                         else:
@@ -443,7 +448,7 @@ class DataLoader:
                         self.loaded_files[file.stem] = self.file_reader("s3://" + str(file)[1:], **kwargs)
                     else:
                         self.loaded_files[file.stem] = self.file_reader(file, **kwargs)
-                    if verbose:
+                    if summary:
                         if self.path_s3:
                             print('    loaded      s3://{}'.format(file))
                         else:
@@ -452,17 +457,18 @@ class DataLoader:
                     if self.failed_to_load is None:
                         self.failed_to_load = []
                     self.failed_to_load.append(file)
+                    str_kwargs = ", ".join(f"{k}={v}" for k, v in kwargs.items())
                     print('  **FAILED to load {}'.format(file))
                     print(
                         '  To review full stack traceback run \n'
                         '  meas.data_loader.file_reader(meas.data_loader'
-                        '.failed_to_load[{}])'.format(failed_to_load_count)
+                        '.failed_to_load[{}], {})'.format(failed_to_load_count, str_kwargs)
                     )
                     if raise_errors:
                         raise err
                     failed_to_load_count += 1
                     continue
-            if verbose:
+            if summary:
                 print('=' * 40)
                 print('File loading complete')
             if len(self.loaded_files) == 0:
@@ -480,8 +486,13 @@ class DataLoader:
                 data = self.join_files()
             elif len(self.loaded_files) == 1:
                 data = list(self.loaded_files.values())[0]
-            data.index.name = "Timestamp"
-            self.data = data
+            try:
+                data.index.name = "Timestamp"
+                self.data = data
+            except UnboundLocalError:
+                warnings.warn(
+                    "No files loaded. Data attribute set to None.")
+                self.data = None
         else:
             warnings.warn("No directory or file found at {}".format(self.path))
 
@@ -568,8 +579,11 @@ def load_data(
     verbose : bool, default False
         Set to True to print status of file loading.
     **kwargs
-        Passed to `DataLoader.load`, which passes them to the `file_reader` function.
-        The default `file_reader` function passes them to pandas.read_csv.
+        Passed to `DataLoader.load`. Any kwargs not used by `DataLoader.load` are 
+        passed to the `file_reader` function, which by default passes
+        them to pandas.read_csv. `DataLoader.load` accepts a summary kwarg to show files
+        loaded from a directory without reindexing status shown when verbose is set to
+        True.
     """
     dl = DataLoader(
         path=path,
@@ -577,16 +591,20 @@ def load_data(
     )
     dl.load(verbose=verbose, skip_dir_load=skip_dir_load, **kwargs)
 
-    if sort:
-        dl.sort_data()
-    if drop_duplicates:
-        dl.drop_duplicate_rows()
-    if reindex:
-        dl.reindex()
-
     cd = CapData(name)
-    cd.data = dl.data.copy()
-    cd.data_filtered = cd.data.copy()
+    if dl.data is not None:
+        if sort:
+            dl.sort_data()
+        if drop_duplicates:
+            dl.drop_duplicate_rows()
+        if reindex:
+            dl.reindex()
+        cd.data = dl.data.copy()
+        cd.data_filtered = cd.data.copy()
+    else:
+        warnings.warn(
+            "Data attribute is None. Skipping sort, drop_duplicates, and reindex")
+
     cd.data_loader = dl
     # group columns
     if callable(group_columns):
