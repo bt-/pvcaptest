@@ -1314,6 +1314,13 @@ class TestGetRegCols():
         assert meas.data[mtr_col].iloc[100] == df['power'].iloc[100]
         assert meas.data['irr_poa_pyran_mean_agg'].iloc[100] == df['poa'].iloc[100]
 
+class TestCapDataHelperMethods():
+    def test_rename_cols(self, meas):
+        meas.rename_cols({
+            'met1_poa_pyranometer': 'poa_new_name'})
+        assert 'poa_new_name' in meas.data.columns
+        assert 'poa_new_name' in meas.data_filtered.columns
+        assert 'poa_new_name' in meas.column_groups['irr_poa_pyran'] 
 
 class TestAggSensors():
     def test_agg_group(self, meas):
@@ -1426,6 +1433,31 @@ class TestAggSensors():
     def test_pre_agg_columns_exists(self, meas):
         meas.agg_sensors()
         assert isinstance(meas.pre_agg_cols, pd.Index)
+
+    def test_agg_subgroups_expanded_map(self, cd_nested_col_groups):
+        """
+        Proof of concept test of idea to implement aggregating sub
+        groups of sensors with agg_sensors by recursively traversing
+        the original agg map, expanding it, sorting it, and adding
+        the intermediate column groupings to the column groups. 
+        """
+        cd = cd_nested_col_groups
+        cd.column_groups['irr_poa_aggs'] = [
+            'irr_poa_met1_mean_agg', 'irr_poa_met2_mean_agg']
+        cd.agg_sensors(agg_map={
+            'irr_poa': 'mean',
+            'irr_poa_met1': 'mean',
+            'irr_poa_met2': 'mean',
+            'irr_poa_aggs': 'mean',
+        })
+        cd.rename_cols({'irr_poa_aggs_mean_agg': 'irr_poa_mean_agg'})
+        # test that all aggregated columns exist
+        for agg_col in [
+            'irr_poa_mean_agg',
+            'irr_poa_met1_mean_agg',
+            'irr_poa_met2_mean_agg',
+        ]:
+            assert agg_col in cd.data.columns
 
     def test_agg_subgroups(self, cd_nested_col_groups):
         cd = cd_nested_col_groups
