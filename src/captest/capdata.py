@@ -9,10 +9,7 @@ objects as arguments and provide a summary of the data filtering steps and
 the results of the capacity test, respectively.
 """
 # standard library imports
-import os
-from pathlib import Path
 import re
-import datetime
 import copy
 from functools import wraps
 from itertools import combinations
@@ -21,26 +18,18 @@ import pytz
 import importlib
 
 # anaconda distribution defaults
-import dateutil
 import numpy as np
 import pandas as pd
 
 # anaconda distribution defaults
 # statistics and machine learning imports
 import statsmodels.formula.api as smf
-from scipy import stats
 # from sklearn.covariance import EllipticEnvelope
 import sklearn.covariance as sk_cv
 
 # anaconda distribution defaults
 # visualization library imports
-import matplotlib.pyplot as plt
-import colorcet as cc
-from bokeh.io import show
-from bokeh.plotting import figure
-from bokeh.palettes import Category10
-from bokeh.layouts import gridplot
-from bokeh.models import Legend, HoverTool, ColumnDataSource, NumeralTickFormatter
+from bokeh.models import HoverTool, NumeralTickFormatter
 
 import param
 
@@ -1562,6 +1551,23 @@ class CapData(object):
         self.pre_agg_reg_trans = None
         self.loc = LocIndexer(self)
         self.floc = FilteredLocIndexer(self)
+        
+    def create_column_group_attributes(self):
+        """Create callable attributes for each column group that return data views.
+
+        For each key in self.column_groups, creates an attribute on the instance
+        that when called returns a view of the data for that column group using
+        the loc indexer functionality.
+        """
+        for grp_id in self.column_groups.keys():
+            def make_getter(key):
+                def getter(self):
+                    return self.loc[key]
+                return getter
+            
+            # Create the property and set it on the instance
+            setattr(self.__class__, grp_id, property(make_getter(grp_id)))
+
 
     def set_regression_cols(self, power='', poa='', t_amb='', w_vel=''):
         """

@@ -1,4 +1,3 @@
-from pathlib import Path
 import os
 import copy
 import collections
@@ -9,15 +8,12 @@ import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
 import holoviews as hv
-import json
-import warnings
 
 import pvlib
 
 import panel as pn
 
 from captest import capdata as pvc
-from captest import util
 from captest import columngroups as cg
 from captest import io
 from captest import(
@@ -2383,5 +2379,32 @@ class TestPlotDashboard():
         assert isinstance(dboard[2], pn.layout.base.Column)
 
 
+class TestCreateColumnGroupAttributes():
+    """
+    Test the create_column_group_attributes method of the CapData class.
+
+    Checks the following:
+    - an attribute is created for each key of self.column_groups
+    - the attributes return the correct view of the data
+    """
+
+    def test_column_group_attributes(self, meas):
+        """Test that column group attributes are created and return correct data."""
+        # Create the column group attributes
+        meas.create_column_group_attributes()
+
+        # Check that an attribute exists for each key in column_groups
+        for group_key in meas.column_groups.keys():
+            assert hasattr(meas, group_key), f"Attribute {group_key} not created"
+
+            # Get the data view using the attribute
+            attr_data = getattr(meas, group_key)
+            # Get the expected data using loc indexer
+            expected_data = meas.loc[group_key]
+
+            # Check that the attribute returns the correct data
+            pd.testing.assert_frame_equal(attr_data, expected_data)
+    
+    
 if __name__ == '__main__':
     unittest.main()
