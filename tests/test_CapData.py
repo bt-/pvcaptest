@@ -1461,6 +1461,7 @@ class TestAggSensors():
 
     def test_agg_subgroups(self, cd_nested_col_groups):
         cd = cd_nested_col_groups
+        cd.regression_cols['poa'] = 'irr_poa'
         cd.agg_sensors(agg_map={
             'irr_poa': {
                 'irr_poa_met1': 'mean',
@@ -1471,15 +1472,21 @@ class TestAggSensors():
                 'irr_rpoa_met2': 'mean'
             }
         })
+        
+        # Check that the expected columns exist
         for agg_col in [
             'irr_poa_mean_agg',
             'irr_poa_met1_mean_agg',
             'irr_poa_met2_mean_agg',
-            'irr_rpoa_mean_agg'
+            'irr_rpoa_mean_agg',
             'irr_rpoa_met1_mean_agg',
-            'irr_rpoa_met2_mean_agg'
+            'irr_rpoa_met2_mean_agg',
         ]:
             assert agg_col in cd.data.columns
+        
+        # Check regression column mapping
+        assert cd.regression_cols['poa'] == 'irr_poa_mean_agg'
+        
         
 class TestFilterSensors():
     def test_perc_diff_none(self, meas):
@@ -2474,7 +2481,7 @@ class TestCreateColumnGroupAttributes():
 class TestExpandAggMap:
     """Test the expand_agg_map method of the CapData class."""
 
-    def test_expand_agg_map_example(self, cd_nested_col_groups):
+    def test_expand_agg_map(self, cd_nested_col_groups):
         """Test the example from the docstring showing nested aggregation map expansion."""
         cd = cd_nested_col_groups
         
@@ -2496,7 +2503,7 @@ class TestExpandAggMap:
         }
         
         # Call the method
-        expanded_map = cd.expand_agg_map(agg_map)
+        expanded_map, rename_map, subgroup_rename_map = cd.expand_agg_map(agg_map)
         
         # Verify the expanded map matches expected (order independent)
         assert set(expanded_map.keys()) == set(expected_expanded_map.keys())
