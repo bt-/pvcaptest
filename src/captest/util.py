@@ -157,3 +157,43 @@ def append_tags(sel_tags, tags, regex_str):
     new_list = sel_tags.copy()
     new_list.extend(tags_by_regex(tags, regex_str))
     return new_list
+
+
+def update_by_path(dictionary, path, new_value=None, convert_callable=False):
+    """
+    Update a nested dictionary value by following a path list.
+    
+    Parameters
+    ----------
+    dictionary : dict
+        The dictionary to update
+    path : list
+        A list representing the path to the target key
+    new_value : optional
+        The new value to set (if None and convert_callable=True,
+        will convert existing tuple to function name)
+    convert_callable : bool, optional
+        If True and new_value is None, converts tuple to function name
+    
+    Returns
+    -------
+    updated_dictionary : dict
+        The updated dictionary
+    """
+    # Get a reference to the current level in the dictionary
+    current = dictionary
+    
+    # Navigate to the parent of the target key
+    for key in path[:-1]:
+        current = current[key]
+    
+    # If convert_callable is True and no new value provided, convert existing tuple
+    if convert_callable and new_value is None:
+        target_value = current[path[-1]]
+        if isinstance(target_value, tuple) and callable(target_value[0]):
+            current[path[-1]] = target_value[0].__name__
+    else:
+        # Update the target key with the new value
+        current[path[-1]] = new_value
+    
+    return dictionary

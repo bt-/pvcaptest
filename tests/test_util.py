@@ -101,3 +101,66 @@ class TestReindexDatetime():
             (df_reindexed, missing_intervals, freq_str) = util.reindex_datetime(df)
         assert df_reindexed.index.is_unique
         assert df_reindexed.shape[0] == 5
+
+
+@pytest.fixture
+def nested_calc_dict():
+    """Create a nested dictionary for testing update_by_path."""
+    def test_func1(arg):
+        pass
+    def test_func2(arg):
+        pass
+    def test_func3(arg):
+        pass
+    def test_func4(arg):
+        pass
+    test_dict = {
+        'power_tc': (test_func1, {
+            'power': 'real_pwr_mtr',
+            'cell_temp': (test_func2, {
+                'poa': 'irr_poa',
+                'bom': (test_func3, {
+                    'poa':'irr_poa', 'temp_amb':'temp_amb', 'wind_speed':'wind_speed'})
+            })
+        }),
+        'irr_total': (test_func4, {
+            'poa': 'irr_poa',
+            'rpoa': 'irr_rpoa',
+        }),
+    }
+    return test_dict
+
+
+class TestUpdateByPath():
+    """Test the update_by_path function."""
+    def test_update_by_path_pass_new_value(self, nested_calc_dict):
+        updated_dict = util.update_by_path(
+            nested_calc_dict, ['power_tc', 1, 'cell_temp', 1, 'bom'], new_value='temp_bom')
+        assert updated_dict['power_tc'][1]['cell_temp'][1]['bom'] == 'temp_bom'
+
+    def test_update_by_path_convert_callable(self, nested_calc_dict):
+        updated_dict = util.update_by_path(
+            nested_calc_dict,
+            ['power_tc', 1, 'cell_temp', 1, 'bom'],
+            new_value=None,
+            convert_callable=True
+        )
+        assert updated_dict['power_tc'][1]['cell_temp'][1]['bom'] == 'test_func3'
+
+    def test_update_by_path_convert_callable_with_new_value(self, nested_calc_dict):
+        updated_dict = util.update_by_path(
+            nested_calc_dict,
+            ['power_tc', 1, 'cell_temp', 1, 'bom'],
+            new_value='temp_bom',
+            convert_callable=True
+        )
+        assert updated_dict['power_tc'][1]['cell_temp'][1]['bom'] == 'temp_bom'
+
+    def test_update_by_path_convert_callable_short_path(self, nested_calc_dict):
+        updated_dict = util.update_by_path(
+            nested_calc_dict,
+            ['power_tc'],
+            new_value=None,
+            convert_callable=True
+        )
+        assert updated_dict['power_tc'] == 'test_func1'
