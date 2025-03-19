@@ -77,6 +77,7 @@ else:
 
 from captest import util
 from captest import plotting
+from captest import calcparams
 
 plot_colors_brewer = {'real_pwr': ['#2b8cbe', '#7bccc4', '#bae4bc', '#f0f9e8'],
                       'irr_poa': ['#e31a1c', '#fd8d3c', '#fecc5c', '#ffffb2'],
@@ -3411,6 +3412,34 @@ class CapData(object):
                 self.column_groups.data, orient='index'
         ).stack().to_frame().droplevel(1).to_excel(save_to, header=False)
 
+    def bom_temp(self, poa=None, temp_amb=None, wind_speed=None, module_type=None, racking=None):
+        """
+        Calculate back-of-module (bom) temperature from Sandia Module Temperature Model.
+        
+        Parameters
+        ----------
+        poa : str
+            The column name of the data attribute with the POA irradiance to use.
+        temp_amb : str
+            The column name of the data attribute with the ambient temperature to use.
+        wind_speed : str
+            The column name of the data attribute with the wind speed to use.
+        module_type : str, default None
+            By default uses value from CapData.module_type
+        racking : str, default None
+            By default uses value from CapData.racking
+        Returns
+        -------
+        None
+            Adds column labeled 'bom_temp' to CapData.data attribute.
+        """
+        self.data['bom_temp'] = calcparams.back_of_module_temp(
+            poa=self.data[poa],
+            temp_amb=self.data[temp_amb],
+            wind_speed=self.data[wind_speed],
+            module_type=self.module_type,
+            racking=self.racking
+        )
 
 if __name__ == "__main__":
     import doctest

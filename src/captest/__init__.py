@@ -5,6 +5,7 @@ from captest import (
     columngroups,
     io,
     plotting,
+    calcparams,
 )
 
 from captest.io import (

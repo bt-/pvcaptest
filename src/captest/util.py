@@ -53,7 +53,7 @@ def get_common_timestep(data, units='m', string_output=True):
     }
     common_timestep = data.index.to_series().diff().mode().values[0]
     common_timestep_tdelta = common_timestep.astype('timedelta64[m]')
-    freq = common_timestep_tdelta / np.timedelta64(1, units)
+    freq =common_timestep_tdelta / np.timedelta64(1, units)
     if string_output:
         try:
             return str(int(freq)) + units_abbrev[units]
@@ -61,6 +61,7 @@ def get_common_timestep(data, units='m', string_output=True):
             return str(freq) + units_abbrev[units]
     else:
         return freq
+
 
 def reindex_datetime(data, file_name=None, report=False):
     """
@@ -82,8 +83,9 @@ def reindex_datetime(data, file_name=None, report=False):
     data_index_length = data.shape[0]
     df = data.copy()
     df.sort_index(inplace=True)
-
+    print('before calling get common timestep')
     freq_str = get_common_timestep(data, string_output=True)
+    print(freq_str)
     full_ix = pd.date_range(start=df.index[0], end=df.index[-1], freq=freq_str)
     try:
         df = df.reindex(index=full_ix)
@@ -303,3 +305,4 @@ def process_reg_cols(original_calc_params, calc_params=None, key_id=None, dict_p
             new_path = dict_path + [1]
             process_reg_cols(original_calc_params, calc_params[1], key_id=key_id, dict_path=new_path)
     # return funcs_to_run
+

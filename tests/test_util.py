@@ -214,3 +214,30 @@ class TestProcessRegCols():
         for k, v in expected_modified_reg_cols.items():
             assert k in test_dict
             assert v == test_dict[k]
+
+
+class TestGetCommonTimestep:
+    def test_output_type_str(self):
+        df = pd.DataFrame({"a": [1, 2, 4]}, index=ix)
+        time_step = util.get_common_timestep(df, units="h", string_output=True)
+        assert isinstance(time_step, str)
+
+    def test_output_type_numeric(self):
+        df = pd.DataFrame({"a": [1, 2, 4]}, index=ix)
+        time_step = util.get_common_timestep(df, units="h", string_output=False)
+        assert isinstance(time_step, np.float64)
+
+    def test_hours_string(self):
+        df = pd.DataFrame({"a": [1, 2, 4]}, index=ix)
+        time_step = util.get_common_timestep(df, units="h", string_output=True)
+        assert time_step == "1H"
+
+    def test_hours_numeric(self):
+        df = pd.DataFrame({"a": [1, 2, 4]}, index=ix)
+        time_step = util.get_common_timestep(df, units="h", string_output=False)
+        assert time_step == 1.0
+
+    def test_minutes_numeric(self):
+        df = pd.DataFrame({"a": [1, 2, 4]}, index=ix)
+        time_step = util.get_common_timestep(df, units="m", string_output=False)
+        assert time_step == 60.0

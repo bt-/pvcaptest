@@ -18,6 +18,7 @@ from captest import columngroups as cg
 from captest import io
 from captest import(
     load_pvsyst,
+    calcparams,
 )
 
 data = np.arange(0, 1300, 54.167)
@@ -2408,6 +2409,7 @@ class TestPointsSummary():
             '1440 points collected\n'
         )
 
+        print(captured.out)
         assert results_str == captured.out
 
     def test_print_points_summary_fail(self, meas):
@@ -2568,6 +2570,42 @@ class TestCreateColumnGroupAttributes():
             # Check that the attribute returns the correct data
             pd.testing.assert_frame_equal(attr_data, expected_data)
     
+
+class TestCalcParams():
+    def test_bom_temp(self, meas):
+        "Test that the bom_temp method of CapData adds correct bom_temp column to data"
+        # Set up test data
+        meas.module_type = 'glass_cell_poly'
+        meas.racking = 'open_rack'
+        meas.agg_sensors(
+            agg_map={'irr_poa_pyran':'mean', 'temp_amb':'mean', 'wind':'mean'})
+        
+        # Call the bom_temp method
+        meas.bom_temp(
+            poa='irr_poa_pyran_mean_agg',
+            temp_amb='temp_amb_mean_agg',
+            wind_speed='wind_mean_agg'
+        )
+        
+        # Verify that bom_temp column was added to data
+        assert 'bom_temp' in meas.data.columns
+        
+        # Calculate expected values manually using the same function
+        expected_bom_temp = calcparams.back_of_module_temp(
+            poa=meas.data['irr_poa_pyran_mean_agg'],
+            temp_amb=meas.data['temp_amb_mean_agg'],
+            wind_speed=meas.data['wind_mean_agg'],
+            module_type='glass_cell_poly',
+            racking='open_rack'
+        )
+        
+        # Verify that the calculated values match the expected values
+        pd.testing.assert_series_equal(
+            meas.data['bom_temp'],
+            expected_bom_temp,
+            check_names=False
+        )
+        
 
 if __name__ == '__main__':
     unittest.main()
