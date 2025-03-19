@@ -201,7 +201,14 @@ def update_by_path(dictionary, path, new_value=None, convert_callable=False):
     return dictionary
 
 
-def process_reg_cols(original_calc_params, calc_params=None, key_id=None, dict_path=None):
+def process_reg_cols(
+        original_calc_params,
+        calc_params=None,
+        key_id=None,
+        dict_path=None,
+        agg_names=None,
+        cd=None,
+    ):
     """
     Recursively process a regression columns dictionary that includes calculated parameters.
 
@@ -269,7 +276,14 @@ def process_reg_cols(original_calc_params, calc_params=None, key_id=None, dict_p
             if isinstance(calc_inputs, tuple):
                 print('value is tuple going in level')
                 new_path = dict_path + [calc_param_id]
-                process_reg_cols(original_calc_params, calc_inputs, key_id=calc_param_id, dict_path=new_path)
+                process_reg_cols(
+                    original_calc_params,
+                    calc_inputs,
+                    key_id=calc_param_id,
+                    dict_path=new_path,
+                    agg_names=agg_names,
+                    cd=cd,
+                )
     elif isinstance(calc_params, tuple):
         print('=' * 40)
         print('calc params is a tuple')
@@ -286,7 +300,19 @@ def process_reg_cols(original_calc_params, calc_params=None, key_id=None, dict_p
                 # The functions should be CapData methods wrapping the functions in the prtest module
                 # args or kwargs that are not Series of Data should be attributes of the CapData instance
                 print(f'calc_params[1]: {calc_params[1]}')
-                func(**calc_params[1])
+                print(agg_names)
+                if agg_names is not None:
+                    agg_name_kwargs = {}
+                    for key, value in calc_params[1].items():
+                        if value in agg_names:
+                            agg_name_kwargs[key] = agg_names[value]
+                        else:
+                            agg_name_kwargs[key] = value
+                        # agg_name_kwargs[key] = agg_names[value] if key in agg_names else value
+                    print(agg_name_kwargs)
+                    func(cd, **agg_name_kwargs)
+                else:
+                    func(cd, **calc_params[1])
                 
                 # Update the original calc_params dictionary at the current path
                 if dict_path:  # Make sure we have a path to update
@@ -295,14 +321,28 @@ def process_reg_cols(original_calc_params, calc_params=None, key_id=None, dict_p
                     # Should process the next layer up now
                     print('=' * 100)
                     print('=' * 100)
-                    process_reg_cols(original_calc_params)
+                    process_reg_cols(original_calc_params, agg_names=agg_names, cd=cd)
             else:
                 print('Not bottom, go down level')
                 print(calc_params[1])
                 new_path = dict_path + [1]
-                process_reg_cols(original_calc_params, calc_params[1], key_id=key_id, dict_path=new_path)
+                process_reg_cols(
+                    original_calc_params,
+                    calc_params[1],
+                    key_id=key_id,
+                    dict_path=new_path,
+                    agg_names=agg_names,
+                    cd=cd,
+                )
         elif isinstance(calc_params[1], tuple):
             new_path = dict_path + [1]
-            process_reg_cols(original_calc_params, calc_params[1], key_id=key_id, dict_path=new_path)
+            process_reg_cols(
+                original_calc_params,
+                calc_params[1],
+                key_id=key_id,
+                dict_path=new_path,
+                agg_names=agg_names,
+                cd=cd,
+            )
     # return funcs_to_run
 
