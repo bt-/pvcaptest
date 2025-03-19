@@ -197,3 +197,109 @@ def update_by_path(dictionary, path, new_value=None, convert_callable=False):
         current[path[-1]] = new_value
     
     return dictionary
+
+
+def process_reg_cols(original_calc_params, calc_params=None, key_id=None, dict_path=None):
+    """
+    Recursively process a regression columns dictionary that includes calculated parameters.
+
+    The regression parameters dictionary attribute of CapData can be defined with a
+    nested structure which includes tuples with two values where the first is a
+    CapData method to calculate a new value (column of Data attribute) and the second
+    is a dictionary of the kwargs to be passed to the function.
+
+    An example tuple:
+    (back_of_module_temp, {'poa': 'irr_poa', 'temp_amb':'temp_amb', 'wind_speed':'wind_speed'})
+    
+    Where back_of_module_temp is a CapData method that accepts the kwargs poa, temp_amb,
+    and wind_speed, which have the values (column group ids) irr_poa, temp_amb, wind_speed,
+    respectively.
+    
+    The dictionary passed to `original_calc_params` may be nested like this example:
+
+    calc_params_map = {
+        'power_tc': (CapData.temp_correct_power, { # power_tc_calc_bom
+            'power': 'real_pwr_mtr',
+            'cell_temp': (CapData.cell_temp, { # cell_temp_calc_bom
+                'poa': 'irr_poa',
+                'bom': (CapData.back_of_module_temp, { # calc_bom
+                    'poa':'irr_poa', 'temp_amb':'temp_amb', 'wind_speed':'wind_speed'})
+            })
+        }),
+    } 
+    
+    This function will start at the bottom of nested dictionaries and progressively
+    call the functions with the kwargs replacing the function tuples with the function
+    names (also the name of the new columns added to CapData.data attribute).
+
+    NOTE: This function is expected to be called after the CapData.agg_sensors method,
+    which will update the column group keys in the regression_cols attribute with the
+    names of the aggregated columns.
+    
+    Parameters
+    ----------
+    original_calc_params : dict
+        The original dictionary to be modified
+    calc_params : dict or tuple
+        The current level of the dictionary being processed
+    key_id : str
+        The key ID of the current level
+    dict_path : list
+        The path to the current level in the dictionary
+    
+    Returns:
+        Dictionary of functions to run
+    """
+    if calc_params is None:
+        calc_params = original_calc_params
+    
+    if dict_path is None:
+        dict_path = []
+    
+    if isinstance(calc_params, dict):
+        print('-' * 40)
+        print('Calc params is a DICT')
+        print(dict_path)
+        for calc_param_id, calc_inputs in calc_params.items():
+            print(calc_param_id)
+            print(calc_inputs)
+            print(type(calc_inputs))
+            if isinstance(calc_inputs, tuple):
+                print('value is tuple going in level')
+                new_path = dict_path + [calc_param_id]
+                process_reg_cols(original_calc_params, calc_inputs, key_id=calc_param_id, dict_path=new_path)
+    elif isinstance(calc_params, tuple):
+        print('=' * 40)
+        print('calc params is a tuple')
+        print(dict_path)
+        print(calc_params)
+        func = calc_params[0]
+        if isinstance(calc_params[1], dict):
+            print('Testing dict second value of tuple for more tuples')
+            if all([isinstance(values, str) for values in calc_params[1].values()]):
+                print('Found bottom')
+                print('+' * 40)
+                # Need to add call to func here passing kwargs
+                # The functions need to modify CapData.Data and add the result in a new column named func.__name__
+                # The functions should be CapData methods wrapping the functions in the prtest module
+                # args or kwargs that are not Series of Data should be attributes of the CapData instance
+                print(f'calc_params[1]: {calc_params[1]}')
+                func(**calc_params[1])
+                
+                # Update the original calc_params dictionary at the current path
+                if dict_path:  # Make sure we have a path to update
+                    update_by_path(original_calc_params, dict_path, func.__name__)
+                    # Add a final recursive call here to reprocess again with the modified original calc params
+                    # Should process the next layer up now
+                    print('=' * 100)
+                    print('=' * 100)
+                    process_reg_cols(original_calc_params)
+            else:
+                print('Not bottom, go down level')
+                print(calc_params[1])
+                new_path = dict_path + [1]
+                process_reg_cols(original_calc_params, calc_params[1], key_id=key_id, dict_path=new_path)
+        elif isinstance(calc_params[1], tuple):
+            new_path = dict_path + [1]
+            process_reg_cols(original_calc_params, calc_params[1], key_id=key_id, dict_path=new_path)
+    # return funcs_to_run

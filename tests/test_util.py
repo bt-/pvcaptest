@@ -106,41 +106,63 @@ class TestReindexDatetime():
 @pytest.fixture
 def nested_calc_dict():
     """Create a nested dictionary for testing update_by_path."""
-    def test_func1(arg):
-        pass
-    def test_func2(arg):
-        pass
-    def test_func3(arg):
-        pass
-    def test_func4(arg):
-        pass
+    # def test_func1(**kwargs):
+    #     return kwargs
+    # def test_func2(**kwargs):
+    #     return kwargs
+    # def test_func3(**kwargs):
+    #     return kwargs
+    # def test_func4(**kwargs):
+    #     return kwargs
+
+    class DummyCapData(object):
+        def __init__(self):
+            self.data = pd.DataFrame()
+        
+        def test_func1(self, **kwargs):
+            self.test_func1_kwargs = kwargs
+            self.data['test_func1'] = np.full(10, 1)
+        def test_func2(self, **kwargs):
+            self.test_func2_kwargs = kwargs
+            self.data['test_func2'] = np.full(10, 2)
+        def test_func3(self, **kwargs):
+            self.test_func3_kwargs = kwargs
+            self.data['test_func3'] = np.full(10, 3)
+        def test_func4(self, **kwargs):
+            self.test_func4_kwargs = kwargs
+            self.data['test_func4'] = np.full(10, 4)
+    
+    dummy_cd = DummyCapData()
+
     test_dict = {
-        'power_tc': (test_func1, {
+        'power_tc': (dummy_cd.test_func1, {
             'power': 'real_pwr_mtr',
-            'cell_temp': (test_func2, {
+            'cell_temp': (dummy_cd.test_func2, {
                 'poa': 'irr_poa',
-                'bom': (test_func3, {
+                'bom': (dummy_cd.test_func3, {
                     'poa':'irr_poa', 'temp_amb':'temp_amb', 'wind_speed':'wind_speed'})
             })
         }),
-        'irr_total': (test_func4, {
+        'irr_total': (dummy_cd.test_func4, {
             'poa': 'irr_poa',
             'rpoa': 'irr_rpoa',
         }),
     }
-    return test_dict
+    return (dummy_cd, test_dict)
 
 
 class TestUpdateByPath():
     """Test the update_by_path function."""
     def test_update_by_path_pass_new_value(self, nested_calc_dict):
+        dummy_cd, test_dict = nested_calc_dict
         updated_dict = util.update_by_path(
-            nested_calc_dict, ['power_tc', 1, 'cell_temp', 1, 'bom'], new_value='temp_bom')
+            test_dict, ['power_tc', 1, 'cell_temp', 1, 'bom'], new_value='temp_bom')
         assert updated_dict['power_tc'][1]['cell_temp'][1]['bom'] == 'temp_bom'
 
     def test_update_by_path_convert_callable(self, nested_calc_dict):
+        dummy_cd, test_dict = nested_calc_dict
         updated_dict = util.update_by_path(
-            nested_calc_dict,
+            test_dict,
             ['power_tc', 1, 'cell_temp', 1, 'bom'],
             new_value=None,
             convert_callable=True
@@ -148,8 +170,9 @@ class TestUpdateByPath():
         assert updated_dict['power_tc'][1]['cell_temp'][1]['bom'] == 'test_func3'
 
     def test_update_by_path_convert_callable_with_new_value(self, nested_calc_dict):
+        dummy_cd, test_dict = nested_calc_dict
         updated_dict = util.update_by_path(
-            nested_calc_dict,
+            test_dict,
             ['power_tc', 1, 'cell_temp', 1, 'bom'],
             new_value='temp_bom',
             convert_callable=True
@@ -157,10 +180,37 @@ class TestUpdateByPath():
         assert updated_dict['power_tc'][1]['cell_temp'][1]['bom'] == 'temp_bom'
 
     def test_update_by_path_convert_callable_short_path(self, nested_calc_dict):
+        dummy_cd, test_dict = nested_calc_dict
         updated_dict = util.update_by_path(
-            nested_calc_dict,
+            test_dict,
             ['power_tc'],
             new_value=None,
             convert_callable=True
         )
         assert updated_dict['power_tc'] == 'test_func1'
+
+
+class TestProcessRegCols():
+    """Test the process_reg_cols function."""
+    def test_modifies_original_calc_params(self, nested_calc_dict):
+        dummy_cd, test_dict = nested_calc_dict
+        util.process_reg_cols(test_dict)
+        expected_modified_reg_cols = {
+            'power_tc': 'test_func1',
+            'irr_total': 'test_func4',
+        }
+        # Check that methods of the DummyCapData instance are called with the
+        # correct kwargs in the correct order based on columns added to the
+        # data DataFrame attribute and the kwargs attributes
+        assert isinstance(dummy_cd.data, pd.DataFrame)
+        assert dummy_cd.data.shape == (10, 4)
+        expected_columns = pd.Index(['test_func3', 'test_func2', 'test_func1', 'test_func4'])
+        assert dummy_cd.data.columns.equals(expected_columns)
+        assert dummy_cd.test_func1_kwargs == {'power':'real_pwr_mtr', 'cell_temp': 'test_func2'}
+        assert dummy_cd.test_func2_kwargs == {'poa': 'irr_poa', 'bom': 'test_func3'}
+        assert dummy_cd.test_func3_kwargs == {
+            'poa':'irr_poa', 'temp_amb':'temp_amb', 'wind_speed':'wind_speed'}
+        # check that reg_cols is rolled up all the way correctly
+        for k, v in expected_modified_reg_cols.items():
+            assert k in test_dict
+            assert v == test_dict[k]
