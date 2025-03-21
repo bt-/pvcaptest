@@ -217,33 +217,38 @@ def process_reg_cols(
     is a dictionary of the kwargs to be passed to the function.
 
     An example tuple:
-    (back_of_module_temp, {'poa': 'irr_poa', 'temp_amb':'temp_amb', 'wind_speed':'wind_speed'})
+    (bom_temp, {'poa': 'irr_poa', 'temp_amb':'temp_amb', 'wind_speed':'wind_speed'})
     
-    Where back_of_module_temp is a CapData method that accepts the kwargs poa, temp_amb,
+    Where bom_temp is a CapData method that accepts the kwargs poa, temp_amb,
     and wind_speed, which have the values (column group ids) irr_poa, temp_amb, wind_speed,
     respectively.
+    
+    Additionally, column groups can be aggregated by specifying a tuple which contains
+    two strings - the column group id (e.g., 'irr_poa') and the aggregation method
+    (e.g. 'mean'). This will result in the CapData.agg_group method being called and
+    the first value in the tuple passed to the group_id kwarg and the second passed
+    to the agg_func kwarg.
     
     The dictionary passed to `original_calc_params` may be nested like this example:
 
     calc_params_map = {
-        'power_tc': (CapData.temp_correct_power, { # power_tc_calc_bom
+        'power_tc': (CapData.power_tc, { 
             'power': 'real_pwr_mtr',
-            'cell_temp': (CapData.cell_temp, { # cell_temp_calc_bom
-                'poa': 'irr_poa',
-                'bom': (CapData.back_of_module_temp, { # calc_bom
-                    'poa':'irr_poa', 'temp_amb':'temp_amb', 'wind_speed':'wind_speed'})
+            'cell_temp': (CapData.cell_temp, {
+                'poa': ('irr_poa', 'mean'),
+                'bom': (CapData.bom_temp, {
+                    'poa': ('irr_poa', 'mean'),
+                    'temp_amb': ('temp_amb', 'mean'),
+                    'wind_speed': ('wind_speed', 'mean')
+                })
             })
         }),
     } 
     
     This function will start at the bottom of nested dictionaries and progressively
     call the functions with the kwargs replacing the function tuples with the function
-    names (also the name of the new columns added to CapData.data attribute).
+    names or the aggregated column names.
 
-    NOTE: This function is expected to be called after the CapData.agg_sensors method,
-    which will update the column group keys in the regression_cols attribute with the
-    names of the aggregated columns.
-    
     Parameters
     ----------
     original_calc_params : dict
@@ -254,9 +259,14 @@ def process_reg_cols(
         The key ID of the current level
     dict_path : list
         The path to the current level in the dictionary
+    cd : CapData
+        CapData instance that functions in original_calc_params will act on.
     
-    Returns:
-        Dictionary of functions to run
+    Returns
+    -------
+    None
+        Modifies the original_calc_params and the data attribute of the CapData object
+        passed to the `cd` argument.
     """
     if calc_params is None:
         calc_params = original_calc_params
@@ -265,15 +275,8 @@ def process_reg_cols(
         dict_path = []
     
     if isinstance(calc_params, dict):
-        print('-' * 40)
-        print('Calc params is a DICT')
-        print(dict_path)
         for calc_param_id, calc_inputs in calc_params.items():
-            print(calc_param_id)
-            print(calc_inputs)
-            print(type(calc_inputs))
             if isinstance(calc_inputs, tuple):
-                print('value is tuple going in level')
                 new_path = dict_path + [calc_param_id]
                 process_reg_cols(
                     original_calc_params,
@@ -283,27 +286,20 @@ def process_reg_cols(
                     cd=cd,
                 )
     elif isinstance(calc_params, tuple):
-        print('=' * 40)
-        print('calc params is a tuple')
-        print(dict_path)
-        print(calc_params)
         func = calc_params[0]
         if isinstance(calc_params[0], str) and isinstance(calc_params[1], str):
-            print('Found bottom - column groups to aggregate')
-            print('+' * 40)
             agg_name = cd.agg_group(group_id=calc_params[0], agg_func=calc_params[1])
             update_by_path(original_calc_params, dict_path, agg_name)
             process_reg_cols(original_calc_params, cd=cd)
         if isinstance(calc_params[1], dict):
-            print('Testing dict second value of tuple for more tuples')
             if all([isinstance(values, str) for values in calc_params[1].values()]):
-                print('Found bottom')
-                print('+' * 40)
                 # Need to add call to func here passing kwargs
-                # The functions need to modify CapData.Data and add the result in a new column named func.__name__
-                # The functions should be CapData methods wrapping the functions in the prtest module
-                # args or kwargs that are not Series of Data should be attributes of the CapData instance
-                print(f'calc_params[1]: {calc_params[1]}')
+                # The functions need to modify CapData.Data and add the result in a new
+                # column named func.__name__
+                # The functions should be CapData methods wrapping the functions in the
+                # prtest module
+                # args or kwargs that are not Series of Data should be attributes of the
+                # CapData instance
                 func(cd, **calc_params[1])
                 # Update the original calc_params dictionary at the current path
                 update_by_path(original_calc_params, dict_path, func.__name__)
@@ -311,8 +307,6 @@ def process_reg_cols(
                 # Effect is to process the next layer up in the dict
                 process_reg_cols(original_calc_params, cd=cd)
             else:
-                print('Not bottom, go down level')
-                print(calc_params[1])
                 new_path = dict_path + [1]
                 process_reg_cols(
                     original_calc_params,
