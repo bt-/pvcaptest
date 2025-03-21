@@ -3495,6 +3495,41 @@ class CapData(object):
             base_temp=base_temp
         )
         
+    def cell_temp(self, bom, poa, module_type=None, racking=None):
+        """
+        Calculate cell temperature from back-of-module temperature and POA irradiance.
+
+        Parameters
+        ----------
+        bom : str
+            The column name of the data attribute with the back-of-module temperature.
+        poa : str
+            The column name of the data attribute with the POA irradiance.
+        module_type : str, default None
+            By default uses value from CapData.module_type
+        racking : str, default None
+            By default uses value from CapData.racking
+        Returns
+        -------
+        None
+            Adds column labeled 'cell_temp' to CapData.data attribute.
+        """
+        if module_type is not None:
+            module_type = module_type
+        else:
+            module_type = self.module_type
+        if racking is not None:
+            racking = racking
+        else:
+            racking = self.racking
+
+        self.data['cell_temp'] = calcparams.cell_temp(
+            bom=self.data[bom],
+            poa=self.data[poa],
+            module_type=module_type,
+            racking=racking
+        )
+        
 
 if __name__ == "__main__":
     import doctest

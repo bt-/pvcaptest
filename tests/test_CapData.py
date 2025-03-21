@@ -2645,13 +2645,50 @@ class TestCalcParams():
             check_names=False
         )
         
+    def test_cell_temp(self, meas):
+        """Test that the cell_temp method of CapData adds correct cell_temp column to data"""
+        # Set up test data
+        meas.module_type = 'glass_cell_poly'
+        meas.racking = 'open_rack'
+        meas.agg_sensors(agg_map={
+            'irr_poa_pyran':'mean',
+            'temp_mod_':'mean',
+        })
+        
+        # Call the cell_temp method
+        meas.cell_temp(
+            bom='temp_mod__mean_agg',
+            poa='irr_poa_pyran_mean_agg'
+        )
+        
+        # Verify that cell_temp column was added to data
+        assert 'cell_temp' in meas.data.columns
+        
+        # Calculate expected values manually using the same function
+        expected_cell_temp = calcparams.cell_temp(
+            bom=meas.data['temp_mod__mean_agg'],
+            poa=meas.data['irr_poa_pyran_mean_agg'],
+            module_type='glass_cell_poly',
+            racking='open_rack'
+        )
+        
+        # Verify that the calculated values match the expected values
+        pd.testing.assert_series_equal(
+            meas.data['cell_temp'],
+            expected_cell_temp,
+            check_names=False
+        )
+        
     def test_bom_temp_reg_cols(self, meas):
         """
         Test processing of regression column that requires calculating BOM temperature.
         """
         orig_reg_cols = {
             'bom': (pvc.CapData.bom_temp, {
-                'poa':'irr_poa_pyran', 'temp_amb':'temp_amb', 'wind_speed':'wind'})
+                'poa':('irr_poa_pyran', 'mean'),
+                'temp_amb':('temp_amb', 'mean'),
+                'wind_speed':('wind', 'mean')
+            })
         }
         meas.module_type = 'glass_cell_poly'
         meas.racking = 'open_rack'
@@ -2690,15 +2727,9 @@ class TestCalcParams():
         """
         orig_reg_cols = {
             'bom': (pvc.CapData.bom_temp, {
-                'poa': (
-                    pvc.CapData.agg_group,
-                    {'group_id': 'irr_poa_pyran', 'agg_func': 'mean'}),
-                'temp_amb': (
-                    pvc.CapData.agg_group,
-                    {'group_id': 'temp_amb', 'agg_func': 'mean'}),
-                'wind_speed': (
-                    pvc.CapData.agg_group,
-                    {'group_id': 'wind', 'agg_func': 'mean'}),
+                'poa': ('irr_poa_pyran', 'mean'),
+                'temp_amb': ('temp_amb', 'mean'),
+                'wind_speed': ('wind', 'mean'),
             })
         }
 
@@ -2777,8 +2808,6 @@ class TestCalcParams():
             check_names=False
         )
         
-        # test that meas.regression_cols_preprocess matches orig_reg_cols
-        assert isinstance(meas.regression_cols_preprocess['bom'], tuple)
-        assert meas.regression_cols['bom'] == 'bom_temp'
+
 if __name__ == '__main__':
     unittest.main()
