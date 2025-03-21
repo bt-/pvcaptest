@@ -207,6 +207,7 @@ def process_reg_cols(
         key_id=None,
         dict_path=None,
         cd=None,
+        agg_cache=None,
     ):
     """
     Recursively process a regression columns dictionary that includes calculated parameters.
@@ -261,6 +262,9 @@ def process_reg_cols(
         The path to the current level in the dictionary
     cd : CapData
         CapData instance that functions in original_calc_params will act on.
+    agg_cache : dict, optional
+        Cache of already aggregated column groups to avoid redundant calls to agg_group.
+        Keys are tuples of (group_id, agg_func) and values are the aggregated column names.
     
     Returns
     -------
@@ -273,6 +277,9 @@ def process_reg_cols(
     
     if dict_path is None:
         dict_path = []
+        
+    if agg_cache is None:
+        agg_cache = {}
     
     if isinstance(calc_params, dict):
         for calc_param_id, calc_inputs in calc_params.items():
@@ -284,13 +291,27 @@ def process_reg_cols(
                     key_id=calc_param_id,
                     dict_path=new_path,
                     cd=cd,
+                    agg_cache=agg_cache,
                 )
     elif isinstance(calc_params, tuple):
         func = calc_params[0]
         if isinstance(calc_params[0], str) and isinstance(calc_params[1], str):
-            agg_name = cd.agg_group(group_id=calc_params[0], agg_func=calc_params[1])
+            # Check if this group_id and agg_func combination has already been aggregated
+            cache_key = (calc_params[0], calc_params[1])
+            if cache_key in agg_cache:
+                agg_name = agg_cache[cache_key]
+            else:
+                # Check if the aggregated column already exists in the data
+                expected_agg_name = f"{calc_params[0]}_{calc_params[1]}_agg"
+                if expected_agg_name in cd.data.columns:
+                    agg_name = expected_agg_name
+                else:
+                    agg_name = cd.agg_group(group_id=calc_params[0], agg_func=calc_params[1])
+                # Store in cache for future use
+                agg_cache[cache_key] = agg_name
+                
             update_by_path(original_calc_params, dict_path, agg_name)
-            process_reg_cols(original_calc_params, cd=cd)
+            process_reg_cols(original_calc_params, cd=cd, agg_cache=agg_cache)
         if isinstance(calc_params[1], dict):
             if all([isinstance(values, str) for values in calc_params[1].values()]):
                 # Need to add call to func here passing kwargs
@@ -305,7 +326,7 @@ def process_reg_cols(
                 update_by_path(original_calc_params, dict_path, func.__name__)
                 # Recursive call to reprocess again with the modified reg_cols dict
                 # Effect is to process the next layer up in the dict
-                process_reg_cols(original_calc_params, cd=cd)
+                process_reg_cols(original_calc_params, cd=cd, agg_cache=agg_cache)
             else:
                 new_path = dict_path + [1]
                 process_reg_cols(
@@ -314,6 +335,7 @@ def process_reg_cols(
                     key_id=key_id,
                     dict_path=new_path,
                     cd=cd,
+                    agg_cache=agg_cache,
                 )
         elif isinstance(calc_params[1], tuple):
             new_path = dict_path + [1]
@@ -323,4 +345,5 @@ def process_reg_cols(
                 key_id=key_id,
                 dict_path=new_path,
                 cd=cd,
+                agg_cache=agg_cache,
             )

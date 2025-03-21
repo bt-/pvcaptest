@@ -2808,13 +2808,14 @@ class TestCalcParams():
             check_names=False
         )
         
-    def test_power_tc_poa(self, meas):
+    def test_power_tc_poa(self, meas, capsys):
         """
         Test processing of regression column that requires calculating power
         temperature correction and mean for poa and rpoa.
 
         Test that there are not duplicate agg columns in data attribute.
         Test that the data_filtered attribute matches the data attribute after processing.
+        Test that the agg_group method is called only once for each unique (group_id, agg_func) pair.
         """
         orig_reg_cols = {
             'power_tc': (pvc.CapData.power_tc, {
@@ -2831,7 +2832,13 @@ class TestCalcParams():
         meas.module_type = 'glass_cell_glass'
         meas.racking = 'open_rack'
         meas.regression_cols = copy.deepcopy(orig_reg_cols)
+        
+        # Process regression columns and capture stdout using pytest's capsys fixture
         meas.process_regression_columns()
+        
+        # Get captured stdout
+        captured = capsys.readouterr()
+        stdout_content = captured.out
         
         # Verify aggregated columns are in CapData.data attribute
         assert 'irr_poa_pyran_mean_agg' in meas.data.columns
@@ -2839,8 +2846,19 @@ class TestCalcParams():
         # should not be duplicate agg columns
         assert len(meas.data.columns) == len(set(meas.data.columns))
 
-        # Verify that bom_temp column was added to data
+        # Verify that power_tc column was added to data
         assert 'power_tc' in meas.data.columns
+        
+        # Check that agg_group was called only once for each unique combination
+        # Count occurrences of aggregation messages for each column group
+        irr_poa_pyran_count = stdout_content.count("Aggregating the below columns using the mean function. New column name: irr_poa_pyran_mean_agg")
+        temp_mod_count = stdout_content.count("Aggregating the below columns using the mean function. New column name: temp_mod__mean_agg")
+        meter_power_count = stdout_content.count("Aggregating the below columns using the mean function. New column name: meter_power_mean_agg")
+        
+        # Each unique aggregation should only appear once in the output
+        assert irr_poa_pyran_count <= 1, f"irr_poa_pyran was aggregated {irr_poa_pyran_count} times, expected at most once"
+        assert temp_mod_count <= 1, f"temp_mod_ was aggregated {temp_mod_count} times, expected at most once"
+        assert meter_power_count <= 1, f"meter_power was aggregated {meter_power_count} times, expected at most once"
         
         pd.testing.assert_frame_equal(
             meas.data,
