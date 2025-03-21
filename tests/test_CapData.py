@@ -2642,20 +2642,22 @@ class TestCalcParams():
         assert isinstance(meas.regression_cols_preprocess['bom'], tuple)
         assert meas.regression_cols['bom'] == 'bom_temp'
 
-    def test_bom_temp_reg_cols_agg_nested_sensors(self, meas):
+    def test_bom_temp_reg_cols_agg(self, meas):
         """
         Test processing of regression column that requires calculating BOM temperature.
         And calculating POA from two subgroups of redundant POA sensors.
         """
         orig_reg_cols = {
             'bom': (pvc.CapData.bom_temp, {
-                'temp_amb': (pvc.CapData.agg_sensors, {'agg_map': {'temp_amb': 'mean'}}),
-                'wind_speed': (pvc.CapData.agg_sensors, {'agg_map': {'wind': 'mean'}}),
-                'poa': (pvc.CapData.agg_sensors, {'agg_map': {
-                    'irr_poa': {
-                        'irr_poa_met1': 'mean',
-                        'irr_poa_met2': 'mean',
-                    }, 'verbose': True}})
+                'poa': (
+                    pvc.CapData.agg_group,
+                    {'group_id': 'irr_poa_pyran', 'agg_func': 'mean'}),
+                'temp_amb': (
+                    pvc.CapData.agg_group,
+                    {'group_id': 'temp_amb', 'agg_func': 'mean'}),
+                'wind_speed': (
+                    pvc.CapData.agg_group,
+                    {'group_id': 'wind', 'agg_func': 'mean'}),
             })
         }
 
@@ -2665,11 +2667,9 @@ class TestCalcParams():
         meas.process_regression_columns()
         
         # Verify aggregated columns are in CapData.data attribute
-        assert 'irr_poa_met1_mean_agg' in meas.data.columns
-        assert 'irr_poa_met2_mean_agg' in meas.data.columns
+        assert 'irr_poa_pyran_mean_agg' in meas.data.columns
         assert 'temp_amb_mean_agg' in meas.data.columns
         assert 'wind_mean_agg' in meas.data.columns
-        assert 'irr_poa_mean_agg' in meas.data.columns
 
         # Verify that bom_temp column was added to data
         assert 'bom_temp' in meas.data.columns

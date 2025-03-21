@@ -2089,7 +2089,9 @@ class CapData(object):
                     print('    ' + col)
             elif len(columns_to_aggregate.columns) > 10:
                 print('   Aggregating all columns of the {} group'.format(group_id))
-        return (agg_result, col_name)
+        # return (agg_result, col_name)
+        self.data[col_name] = agg_result
+        return col_name
 
     def expand_agg_map(self, agg_map):
         """
