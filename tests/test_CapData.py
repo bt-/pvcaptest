@@ -2808,6 +2808,47 @@ class TestCalcParams():
             check_names=False
         )
         
+    def test_power_tc_poa(self, meas):
+        """
+        Test processing of regression column that requires calculating power
+        temperature correction and mean for poa and rpoa.
 
+        Test that there are not duplicate agg columns in data attribute.
+        Test that the data_filtered attribute matches the data attribute after processing.
+        """
+        orig_reg_cols = {
+            'power_tc': (pvc.CapData.power_tc, {
+                'power': ('meter_power', 'mean'),
+                'cell_temp': (pvc.CapData.cell_temp, {
+                    'bom': ('temp_mod_', 'mean'),
+                    'poa': ('irr_poa_pyran', 'mean')})
+            }),
+            'poa': ('irr_poa_pyran', 'mean'),
+        }
+
+        meas.power_temp_coeff = -0.36
+        meas.base_temp = 25
+        meas.module_type = 'glass_cell_glass'
+        meas.racking = 'open_rack'
+        meas.regression_cols = copy.deepcopy(orig_reg_cols)
+        meas.process_regression_columns()
+        
+        # Verify aggregated columns are in CapData.data attribute
+        assert 'irr_poa_pyran_mean_agg' in meas.data.columns
+        assert 'temp_mod__mean_agg' in meas.data.columns
+        # should not be duplicate agg columns
+        assert len(meas.data.columns) == len(set(meas.data.columns))
+
+        # Verify that bom_temp column was added to data
+        assert 'power_tc' in meas.data.columns
+        
+        pd.testing.assert_frame_equal(
+            meas.data,
+            meas.data_filtered,
+            check_names=True,
+            check_dtype=False,
+            check_like=True
+        )
+        
 if __name__ == '__main__':
     unittest.main()

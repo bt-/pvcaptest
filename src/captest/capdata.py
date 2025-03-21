@@ -2277,9 +2277,18 @@ class CapData(object):
 
         See util.process_reg_cols for additional documentation.
         """
+        if not len(self.summary) == 0:
+            warnings.warn('The data_filtered attribute has been overwritten '
+                          'and previously applied filtering steps have been '
+                          'lost.  It is recommended to use agg_sensors '
+                          'before any filtering methods.')
+        # reset summary data
+        self.summary_ix = []
+        self.summary = []
+
         self.regression_cols_preprocess = copy.deepcopy(self.regression_cols)
-        util.process_reg_cols(
-            self.regression_cols, cd=self)
+        util.process_reg_cols(self.regression_cols, cd=self)
+        self.data_filtered = self.data.copy()
 
     def data_columns_to_excel(self, sort_by_reversed_names=True):
         """
