@@ -2694,5 +2694,50 @@ class TestCalcParams():
         assert isinstance(meas.regression_cols_preprocess['bom'], tuple)
         assert meas.regression_cols['bom'] == 'bom_temp'
         
+    def test_bom_temp_reg_cols_agg_abbrev(self, meas):
+        """
+        Test processing of regression column that requires calculating BOM temperature.
+        And calculating POA from two subgroups of redundant POA sensors.
+        """
+        orig_reg_cols = {
+            'bom': (pvc.CapData.bom_temp, {
+                'poa': ('irr_poa_pyran', 'mean'),
+                'temp_amb': ('temp_amb', 'mean'),
+                'wind_speed': ('wind', 'mean'),
+            })
+        }
+
+        meas.module_type = 'glass_cell_poly'
+        meas.racking = 'open_rack'
+        meas.regression_cols = copy.deepcopy(orig_reg_cols)
+        meas.process_regression_columns()
+        
+        # Verify aggregated columns are in CapData.data attribute
+        assert 'irr_poa_pyran_mean_agg' in meas.data.columns
+        assert 'temp_amb_mean_agg' in meas.data.columns
+        assert 'wind_mean_agg' in meas.data.columns
+
+        # Verify that bom_temp column was added to data
+        assert 'bom_temp' in meas.data.columns
+        
+        # Calculate expected values manually using the same function
+        expected_bom_temp = calcparams.back_of_module_temp(
+            poa=meas.data['irr_poa_pyran_mean_agg'],
+            temp_amb=meas.data['temp_amb_mean_agg'],
+            wind_speed=meas.data['wind_mean_agg'],
+            module_type='glass_cell_poly',
+            racking='open_rack'
+        )
+        
+        # Verify that the calculated values match the expected values
+        pd.testing.assert_series_equal(
+            meas.data['bom_temp'],
+            expected_bom_temp,
+            check_names=False
+        )
+        
+        # test that meas.regression_cols_preprocess matches orig_reg_cols
+        assert isinstance(meas.regression_cols_preprocess['bom'], tuple)
+        assert meas.regression_cols['bom'] == 'bom_temp'
 if __name__ == '__main__':
     unittest.main()
