@@ -206,7 +206,6 @@ def process_reg_cols(
         calc_params=None,
         key_id=None,
         dict_path=None,
-        agg_names=None,
         cd=None,
     ):
     """
@@ -281,7 +280,6 @@ def process_reg_cols(
                     calc_inputs,
                     key_id=calc_param_id,
                     dict_path=new_path,
-                    agg_names=agg_names,
                     cd=cd,
                 )
     elif isinstance(calc_params, tuple):
@@ -300,28 +298,31 @@ def process_reg_cols(
                 # The functions should be CapData methods wrapping the functions in the prtest module
                 # args or kwargs that are not Series of Data should be attributes of the CapData instance
                 print(f'calc_params[1]: {calc_params[1]}')
-                print(agg_names)
-                if agg_names is not None:
-                    agg_name_kwargs = {}
-                    for key, value in calc_params[1].items():
-                        if value in agg_names:
-                            agg_name_kwargs[key] = agg_names[value]
-                        else:
-                            agg_name_kwargs[key] = value
-                        # agg_name_kwargs[key] = agg_names[value] if key in agg_names else value
-                    print(agg_name_kwargs)
-                    func(cd, **agg_name_kwargs)
-                else:
-                    func(cd, **calc_params[1])
+                # print(agg_names)
+                # if agg_names is not None:
+                #     agg_name_kwargs = {}
+                #     for key, value in calc_params[1].items():
+                #         if value in agg_names:
+                #             agg_name_kwargs[key] = agg_names[value]
+                #         else:
+                #             agg_name_kwargs[key] = value
+                #         # agg_name_kwargs[key] = agg_names[value] if key in agg_names else value
+                #     print(agg_name_kwargs)
+                #     func(cd, **agg_name_kwargs)
+                # else:
+                agg_name = func(cd, **calc_params[1])
                 
                 # Update the original calc_params dictionary at the current path
                 if dict_path:  # Make sure we have a path to update
-                    update_by_path(original_calc_params, dict_path, func.__name__)
+                    if agg_name is not None:
+                        update_by_path(original_calc_params, dict_path, agg_name)
+                    else:
+                        update_by_path(original_calc_params, dict_path, func.__name__)
                     # Add a final recursive call here to reprocess again with the modified original calc params
                     # Should process the next layer up now
                     print('=' * 100)
                     print('=' * 100)
-                    process_reg_cols(original_calc_params, agg_names=agg_names, cd=cd)
+                    process_reg_cols(original_calc_params, cd=cd)
             else:
                 print('Not bottom, go down level')
                 print(calc_params[1])
@@ -331,7 +332,6 @@ def process_reg_cols(
                     calc_params[1],
                     key_id=key_id,
                     dict_path=new_path,
-                    agg_names=agg_names,
                     cd=cd,
                 )
         elif isinstance(calc_params[1], tuple):
@@ -341,7 +341,6 @@ def process_reg_cols(
                 calc_params[1],
                 key_id=key_id,
                 dict_path=new_path,
-                agg_names=agg_names,
                 cd=cd,
             )
     # return funcs_to_run

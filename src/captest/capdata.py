@@ -2242,21 +2242,21 @@ class CapData(object):
         self.rename_cols(rename_map)
         self.agg_name_mapper = agg_names
         # update regression_cols attribute
-        # for reg_var, trans_group in self.regression_cols.items():
-        #     if self.loc[reg_var].shape[1] == 1:
-        #         continue
-        #     elif trans_group in agg_names.keys():
-        #         print(
-        #             "Regression variable '{}' has been remapped: '{}' to '{}'"
-        #             .format(reg_var, trans_group, agg_names[trans_group])
-        #         )
-        #         self.regression_cols[reg_var] = agg_names[trans_group]
-        #     elif trans_group in subgroup_rename_map.keys():
-        #         print(
-        #             "Regression variable '{}' has been remapped: '{}' to '{}"
-        #             .format(reg_var, trans_group, subgroup_rename_map[trans_group])
-        #         )
-        #         self.regression_cols[reg_var] = subgroup_rename_map[trans_group]
+        for reg_var, trans_group in self.regression_cols.items():
+            if self.loc[reg_var].shape[1] == 1:
+                continue
+            elif trans_group in agg_names.keys():
+                print(
+                    "Regression variable '{}' has been remapped: '{}' to '{}'"
+                    .format(reg_var, trans_group, agg_names[trans_group])
+                )
+                self.regression_cols[reg_var] = agg_names[trans_group]
+            elif trans_group in subgroup_rename_map.keys():
+                print(
+                    "Regression variable '{}' has been remapped: '{}' to '{}"
+                    .format(reg_var, trans_group, subgroup_rename_map[trans_group])
+                )
+                self.regression_cols[reg_var] = subgroup_rename_map[trans_group]
         # update column_groups attribute
         self.column_groups['agg'] = [
             rename_map[name] if name in rename_map.keys() else name
@@ -2264,6 +2264,7 @@ class CapData(object):
         ]
         self.create_column_group_attributes()
         self.create_agg_attributes()
+        return agg_names
 
     def process_regression_columns(self):
         """
@@ -2272,7 +2273,8 @@ class CapData(object):
         See util.process_reg_cols for additional documentation.
         """
         self.regression_cols_preprocess = copy.deepcopy(self.regression_cols)
-        util.process_reg_cols(self.regression_cols, agg_names=self.agg_name_mapper, cd=self)
+        util.process_reg_cols(
+            self.regression_cols, cd=self)
 
     def data_columns_to_excel(self, sort_by_reversed_names=True):
         """
