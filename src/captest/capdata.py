@@ -2053,7 +2053,7 @@ class CapData(object):
         else:
             return poa_cols[0]
 
-    def agg_group(self, group_id, agg_func, verbose=True, rename_map=None):
+    def agg_group(self, group_id, agg_func, verbose=True, rename_map=None, inplace=True):
         """
         Aggregate columns in a group.
 
@@ -2089,9 +2089,11 @@ class CapData(object):
                     print('    ' + col)
             elif len(columns_to_aggregate.columns) > 10:
                 print('   Aggregating all columns of the {} group'.format(group_id))
-        # return (agg_result, col_name)
-        self.data[col_name] = agg_result
-        return col_name
+        if inplace:
+            self.data[col_name] = agg_result
+            return col_name
+        else:
+            return (agg_result, col_name)
 
     def expand_agg_map(self, agg_map):
         """
@@ -2232,7 +2234,7 @@ class CapData(object):
             if self.loc[group_id].shape[1] == 1:
                 continue
             agg_result, col_name = self.agg_group(
-                group_id, agg_func, verbose=verbose, rename_map=rename_map)
+                group_id, agg_func, verbose=verbose, rename_map=rename_map, inplace=False)
             self.data = pd.concat([agg_result, self.data], axis=1)
             agg_names[group_id] = col_name
         self.data_filtered = self.data.copy()
@@ -2243,22 +2245,23 @@ class CapData(object):
         print(rename_map)
         self.rename_cols(rename_map)
         self.agg_name_mapper = agg_names
-        # update regression_cols attribute
-        for reg_var, trans_group in self.regression_cols.items():
-            if self.loc[reg_var].shape[1] == 1:
-                continue
-            elif trans_group in agg_names.keys():
-                print(
-                    "Regression variable '{}' has been remapped: '{}' to '{}'"
-                    .format(reg_var, trans_group, agg_names[trans_group])
-                )
-                self.regression_cols[reg_var] = agg_names[trans_group]
-            elif trans_group in subgroup_rename_map.keys():
-                print(
-                    "Regression variable '{}' has been remapped: '{}' to '{}"
-                    .format(reg_var, trans_group, subgroup_rename_map[trans_group])
-                )
-                self.regression_cols[reg_var] = subgroup_rename_map[trans_group]
+        # # update regression_cols attribute
+        # for reg_var, trans_group in self.regression_cols.items():
+        #     print(reg_var)
+        #     if self.loc[reg_var].shape[1] == 1:
+        #         continue
+        #     elif trans_group in agg_names.keys():
+        #         print(
+        #             "Regression variable '{}' has been remapped: '{}' to '{}'"
+        #             .format(reg_var, trans_group, agg_names[trans_group])
+        #         )
+        #         self.regression_cols[reg_var] = agg_names[trans_group]
+        #     elif trans_group in subgroup_rename_map.keys():
+        #         print(
+        #             "Regression variable '{}' has been remapped: '{}' to '{}"
+        #             .format(reg_var, trans_group, subgroup_rename_map[trans_group])
+        #         )
+        #         self.regression_cols[reg_var] = subgroup_rename_map[trans_group]
         # update column_groups attribute
         self.column_groups['agg'] = [
             rename_map[name] if name in rename_map.keys() else name
