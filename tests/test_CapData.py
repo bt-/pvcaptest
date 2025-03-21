@@ -2603,7 +2603,48 @@ class TestCalcParams():
             expected_bom_temp,
             check_names=False
         )
-    
+        
+    def test_temp_correct_power(self, meas):
+        """Test that the temp_correct_power method of CapData adds correct power
+        column to data"""
+        # Set up test data
+        meas.module_type = 'glass_cell_poly'
+        meas.racking = 'open_rack'
+        meas.agg_sensors(agg_map={
+            'irr_poa_pyran':'mean',
+            'temp_amb':'mean',
+            'wind':'mean',
+            'temp_mod_':'mean',
+        })
+        meas.power_temp_coeff = -0.36
+        meas.base_temp = 25
+        # make dummy cell temp data
+        meas.data['cell_temp'] = meas.data['temp_mod__mean_agg'] + 3
+        
+        # Call the temp_correct_power method
+        meas.power_tc(
+            power='meter_power',
+            cell_temp='cell_temp',
+        )
+        
+        # Verify that power column was added to data
+        assert 'power_tc' in meas.data.columns
+        
+        # Calculate expected values manually using the same function
+        expected_power = calcparams.temp_correct_power(
+            power=meas.data['meter_power'],
+            power_temp_coeff=-0.36,
+            cell_temp=meas.data['cell_temp'],
+            base_temp=25
+        )
+        
+        # Verify that the calculated values match the expected values
+        pd.testing.assert_series_equal(
+            meas.data['power_tc'],
+            expected_power,
+            check_names=False
+        )
+        
     def test_bom_temp_reg_cols(self, meas):
         """
         Test processing of regression column that requires calculating BOM temperature.
