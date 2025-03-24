@@ -2918,6 +2918,31 @@ class TestCalcParams():
             'power_tc': 'power_tc',
             'poa': 'GlobInc',
         }
+
+    def test_rpoa_pvsyst(self, pvsyst):
+        """
+        Test the rpoa_pvsyst method which calculates the sum of PVsyst's global rear irradiance
+        and rear shading and IAM losses.
+        """
+        # Get the length of existing data
+        data_length = len(pvsyst.data)
+
+        # Add test columns to the data with matching length
+        pvsyst.data['GlobBak'] = np.linspace(100, 200, data_length)  # Global rear irradiance
+        pvsyst.data['BackShd'] = np.linspace(10, 30, data_length)    # Rear shading and IAM losses
+
+        # Call the rpoa_pvsyst method
+        pvsyst.rpoa_pvsyst('GlobBak', 'BackShd')
+
+        # Check that the rpoa_pvsyst column was added to the data
+        assert 'rpoa_pvsyst' in pvsyst.data.columns
+
+        # Check that the values were calculated correctly
+        expected_values = (pvsyst.data['GlobBak'] + pvsyst.data['BackShd']).rename('rpoa_pvsyst')
+        pd.testing.assert_series_equal(
+            pvsyst.data['rpoa_pvsyst'],
+            expected_values
+        )
         
 if __name__ == '__main__':
     unittest.main()

@@ -3538,6 +3538,26 @@ class CapData(object):
             module_type=module_type,
             racking=racking
         )
+    
+    def rpoa_pvsyst(self, globbak, backshd):
+        """Calculate the sum of PVsyst's global rear irradiance and rear shading and IAM losses.
+
+        Parameters
+        ----------
+        globbak : str
+            Column name for global rear irradiance (W/m^2).
+        backshd : str
+            Column name for rear shading and IAM losses (W/m^2).
+
+        Returns
+        -------
+        None
+            Adds column labeled 'rpoa_pvsyst' to CapData.data attribute.
+        """
+        self.data['rpoa_pvsyst'] = calcparams.pvsyst_rear_irradiance(
+            globbak=self.data[globbak],
+            backshd=self.data[backshd]
+        )
         
 
 if __name__ == "__main__":

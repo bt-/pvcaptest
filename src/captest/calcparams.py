@@ -131,3 +131,20 @@ def avg_typ_cell_temp(poa, cell_temp):
         Average irradiance-weighted cell temperature.
     """
     return (poa * cell_temp).sum() / poa.sum()
+
+def pvsyst_rear_irradiance(globbak, backshd):
+    """Calculate the sum of PVsyst's global rear irradiance and rear shading and IAM losses.
+
+    Parameters
+    ----------
+    globbak : numeric or Series
+        Global rear irradiance (W/m^2).
+    backshd : numeric or Series
+        Rear shading and IAM losses (W/m^2).
+
+    Returns
+    -------
+    numeric or Series
+        Sum of global rear irradiance and rear shading and IAM losses.
+    """
+    return globbak + backshd
