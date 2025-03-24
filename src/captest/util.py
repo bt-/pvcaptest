@@ -197,8 +197,6 @@ def update_by_path(dictionary, path, new_value=None, convert_callable=False):
             current[path[-1]] = target_value[0].__name__
     else:
         # Update the target key with the new value
-        print(current)
-        print(current[path[-1]])
         current[path[-1]] = new_value
     
     return dictionary
