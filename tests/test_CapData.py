@@ -2896,6 +2896,28 @@ class TestCalcParams():
         
         assert meas.regression_cols == {'power': 'sel735_ac_kw'}
 
+    def test_all_column_groups_point_to_single_column(self, pvsyst):
+        """
+        Check that col group ids are replaced with column names when all dict values are strings.
+        """
+        pvsyst.power_temp_coeff = -0.36
+        pvsyst.base_temp = 25
+        pvsyst.module_type = 'glass_cell_glass'
+        pvsyst.racking = 'open_rack'
+
+        pvsyst.regression_cols = {
+            'power_tc': (pvc.CapData.power_tc, {
+                'power': 'real_pwr--',
+                'cell_temp': 'temp-mod-'}),
+            'poa': 'irr-poa-',
+        }
+
+        pvsyst.process_regression_columns()
+
+        assert pvsyst.regression_cols == {
+            'power_tc': 'power_tc',
+            'poa': 'GlobInc',
+        }
         
 if __name__ == '__main__':
     unittest.main()

@@ -298,7 +298,8 @@ def process_reg_cols(
                     cd=cd,
                     agg_cache=agg_cache,
                 )
-            elif (calc_inputs in cd.column_groups) and (len(cd.column_groups[calc_inputs]) == 1):
+            elif ((calc_inputs in cd.column_groups) and
+                  (len(cd.column_groups[calc_inputs]) == 1)):
                 dp_temp = copy.copy(dict_path)
                 dp_temp.extend([calc_param_id])
                 update_by_path(
@@ -324,14 +325,24 @@ def process_reg_cols(
             process_reg_cols(original_calc_params, cd=cd, agg_cache=agg_cache)
         if isinstance(calc_params[1], dict):
             if all([isinstance(values, str) for values in calc_params[1].values()]):
+                # Check if any values are column group IDs pointing to groups with only one column
+                # If so, replace them with the actual column name
+                updated_params = {}
+                for key, value in calc_params[1].items():
+                    if value in cd.column_groups and len(cd.column_groups[value]) == 1:
+                        # Replace column group ID with the actual column name
+                        updated_params[key] = cd.column_groups[value][0]
+                    else:
+                        updated_params[key] = value
+                
                 # Need to add call to func here passing kwargs
                 # The functions need to modify CapData.Data and add the result in a new
                 # column named func.__name__
                 # The functions should be CapData methods wrapping the functions in the
-                # prtest module
+                # calcparams module
                 # args or kwargs that are not Series of Data should be attributes of the
                 # CapData instance
-                func(cd, **calc_params[1])
+                func(cd, **updated_params)
                 # Update the original calc_params dictionary at the current path
                 update_by_path(original_calc_params, dict_path, func.__name__)
                 # Recursive call to reprocess again with the modified reg_cols dict
