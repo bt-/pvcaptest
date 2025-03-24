@@ -2817,9 +2817,14 @@ class TestCalcParams():
         Test that the data_filtered attribute matches the data attribute after processing.
         Test that the agg_group method is called only once for each unique (group_id, agg_func) pair.
         """
+        # rename metered power column so it doesn't match column group id without
+        # affecting other tests
+        meas.data.rename(columns={'meter_power': 'sel735_ac_kw'}, inplace=True)
+        meas.reset_filter()
+        meas.column_groups['meter_power'] = ['sel735_ac_kw']
         orig_reg_cols = {
             'power_tc': (pvc.CapData.power_tc, {
-                'power': ('meter_power', 'mean'),
+                'power': 'meter_power',
                 'cell_temp': (pvc.CapData.cell_temp, {
                     'bom': ('temp_mod_', 'mean'),
                     'poa': ('irr_poa_pyran', 'mean')})
@@ -2867,6 +2872,30 @@ class TestCalcParams():
             check_dtype=False,
             check_like=True
         )
+        
+        exp_reg_cols_after_process = {
+            'power_tc':'power_tc',
+            'poa': 'irr_poa_pyran_mean_agg',
+        }
+        assert meas.regression_cols == exp_reg_cols_after_process
+
+    def test_column_group_with_one_column(self, meas, capsys):
+        """
+        Check that a regression parameter pointing to a column group id with one 
+        column will replace the column group id with the column name.
+        """
+        # rename metered power column so it doesn't match column group id without
+        # affecting other tests
+        meas.data.rename(columns={'meter_power': 'sel735_ac_kw'}, inplace=True)
+        meas.reset_filter()
+        meas.column_groups['meter_power'] = ['sel735_ac_kw']
+        meas.regression_cols = {'power': 'meter_power'}
+        
+        # Process regression columns and capture stdout using pytest's capsys fixture
+        meas.process_regression_columns()
+        
+        assert meas.regression_cols == {'power': 'sel735_ac_kw'}
+
         
 if __name__ == '__main__':
     unittest.main()

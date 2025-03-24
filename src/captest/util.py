@@ -1,3 +1,4 @@
+import copy
 import warnings
 import re
 import json
@@ -196,6 +197,8 @@ def update_by_path(dictionary, path, new_value=None, convert_callable=False):
             current[path[-1]] = target_value[0].__name__
     else:
         # Update the target key with the new value
+        print(current)
+        print(current[path[-1]])
         current[path[-1]] = new_value
     
     return dictionary
@@ -229,6 +232,10 @@ def process_reg_cols(
     (e.g. 'mean'). This will result in the CapData.agg_group method being called and
     the first value in the tuple passed to the group_id kwarg and the second passed
     to the agg_func kwarg.
+
+    If a regression parameter key is paired with a column groups id for a column
+    group with only a single column, then that column name will replace the column group
+    id.
     
     The dictionary passed to `original_calc_params` may be nested like this example:
 
@@ -293,6 +300,11 @@ def process_reg_cols(
                     cd=cd,
                     agg_cache=agg_cache,
                 )
+            elif (calc_inputs in cd.column_groups) and (len(cd.column_groups[calc_inputs]) == 1):
+                dp_temp = copy.copy(dict_path)
+                dp_temp.extend([calc_param_id])
+                update_by_path(
+                    original_calc_params, dp_temp, cd.column_groups[calc_inputs][0])
     elif isinstance(calc_params, tuple):
         func = calc_params[0]
         if isinstance(calc_params[0], str) and isinstance(calc_params[1], str):
