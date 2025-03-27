@@ -304,6 +304,14 @@ def process_reg_cols(
                 dp_temp.extend([calc_param_id])
                 update_by_path(
                     original_calc_params, dp_temp, cd.column_groups[calc_inputs][0])
+            elif ((calc_inputs in cd.column_groups) and
+                  (len(cd.column_groups[calc_inputs]) > 1)):
+                raise ValueError(
+                    f'Looks like you specified a column group ID "{calc_inputs}" that '
+                    f'points to a group with more than one column. '
+                    f'Try replacing it with ("{calc_inputs}", "mean") or a different '
+                    f'aggregation method.'
+                )
     elif isinstance(calc_params, tuple):
         func = calc_params[0]
         if isinstance(calc_params[0], str) and isinstance(calc_params[1], str):
@@ -335,14 +343,12 @@ def process_reg_cols(
                         updated_params[key] = cd.column_groups[value][0]
                     elif (value in cd.column_groups and
                           len(cd.column_groups[value]) > 1):
-                        warnings.warn(
+                        raise ValueError(
                             f'Looks like you specified a column group ID "{value}" that '
                             f'points to a group with more than one column. '
                             f'Try replacing it with ("{value}", "mean") or a different '
-                            f'aggregation method.',
-                            UserWarning
+                            f'aggregation method.'
                         )
-                        updated_params[key] = value
                     else:
                         updated_params[key] = value
                 # Need to add call to func here passing kwargs
