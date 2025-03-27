@@ -790,9 +790,8 @@ class TestIrrRcBalanced():
     def test_check_csv_output_exists(self, meas, tmp_path):
         """Check that function outputs a csv file when given a file path."""
         f = tmp_path / 'output.csv'
-        print(meas.column_groups)
-        meas.agg_sensors(agg_map={'irr_poa_pyran': 'mean'})
-        print(meas.regression_cols['poa'])
+        meas.regression_cols = {'poa': ('irr_poa_pyran', 'mean')}
+        meas.process_regression_columns()
         rep_irr = pvc.ReportingIrradiance(
             df=meas.data,
             irr_col=meas.regression_cols['poa'],

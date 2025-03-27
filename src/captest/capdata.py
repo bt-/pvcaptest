@@ -2240,9 +2240,9 @@ class CapData(object):
         self.data_filtered = self.data.copy()
 
         # print('Agg names')
-        print(agg_names)
+        # print(agg_names)
         # print('Renamer')
-        print(rename_map)
+        # print(rename_map)
         self.rename_cols(rename_map)
         self.agg_name_mapper = agg_names
         # # update regression_cols attribute
