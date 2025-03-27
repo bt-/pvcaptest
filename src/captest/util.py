@@ -329,12 +329,22 @@ def process_reg_cols(
                 # If so, replace them with the actual column name
                 updated_params = {}
                 for key, value in calc_params[1].items():
-                    if value in cd.column_groups and len(cd.column_groups[value]) == 1:
+                    if (value in cd.column_groups and
+                        len(cd.column_groups[value]) == 1):
                         # Replace column group ID with the actual column name
                         updated_params[key] = cd.column_groups[value][0]
+                    elif (value in cd.column_groups and
+                          len(cd.column_groups[value]) > 1):
+                        warnings.warn(
+                            f'Looks like you specified a column group ID "{value}" that '
+                            f'points to a group with more than one column. '
+                            f'Try replacing it with ("{value}", "mean") or a different '
+                            f'aggregation method.',
+                            UserWarning
+                        )
+                        updated_params[key] = value
                     else:
                         updated_params[key] = value
-                
                 # Need to add call to func here passing kwargs
                 # The functions need to modify CapData.Data and add the result in a new
                 # column named func.__name__
