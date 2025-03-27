@@ -2223,13 +2223,7 @@ class CapData(object):
                        self.regression_cols['w_vel']: 'mean'}
 
         agg_names = {}
-        # print('Original agg map')
-        # print(agg_map)
         agg_map, rename_map, subgroup_rename_map = self.expand_agg_map(agg_map)
-        # print('Expanded agg map')
-        # print(agg_map)
-        # print('Subgroup rename map')
-        # print(subgroup_rename_map)
         for group_id, agg_func in agg_map.items():
             if self.loc[group_id].shape[1] == 1:
                 continue
@@ -2238,30 +2232,8 @@ class CapData(object):
             self.data = pd.concat([agg_result, self.data], axis=1)
             agg_names[group_id] = col_name
         self.data_filtered = self.data.copy()
-
-        # print('Agg names')
-        # print(agg_names)
-        # print('Renamer')
-        # print(rename_map)
         self.rename_cols(rename_map)
         self.agg_name_mapper = agg_names
-        # # update regression_cols attribute
-        # for reg_var, trans_group in self.regression_cols.items():
-        #     print(reg_var)
-        #     if self.loc[reg_var].shape[1] == 1:
-        #         continue
-        #     elif trans_group in agg_names.keys():
-        #         print(
-        #             "Regression variable '{}' has been remapped: '{}' to '{}'"
-        #             .format(reg_var, trans_group, agg_names[trans_group])
-        #         )
-        #         self.regression_cols[reg_var] = agg_names[trans_group]
-        #     elif trans_group in subgroup_rename_map.keys():
-        #         print(
-        #             "Regression variable '{}' has been remapped: '{}' to '{}"
-        #             .format(reg_var, trans_group, subgroup_rename_map[trans_group])
-        #         )
-        #         self.regression_cols[reg_var] = subgroup_rename_map[trans_group]
         # update column_groups attribute
         self.column_groups['agg'] = [
             rename_map[name] if name in rename_map.keys() else name
@@ -2269,7 +2241,6 @@ class CapData(object):
         ]
         self.create_column_group_attributes()
         self.create_agg_attributes()
-        return agg_names
 
     def process_regression_columns(self):
         """
