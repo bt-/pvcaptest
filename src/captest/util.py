@@ -162,6 +162,28 @@ def append_tags(sel_tags, tags, regex_str):
     return new_list
 
 
+def get_agg_column_name(group_id, agg_func):
+    """Generate a column name for an aggregated column.
+
+    Parameters
+    ----------
+    group_id : str
+        Identifier for the group of columns being aggregated.
+    agg_func : str or callable
+        Aggregation function used.
+
+    Returns
+    -------
+    str
+        Name for the aggregated column.
+    """
+    if isinstance(agg_func, str):
+        col_name = group_id + '_' + agg_func + '_agg'
+    else:
+        col_name = group_id + '_' + agg_func.__name__ + '_agg'
+    return col_name
+
+
 def update_by_path(dictionary, path, new_value=None, convert_callable=False):
     """
     Update a nested dictionary value by following a path list.
@@ -321,7 +343,7 @@ def process_reg_cols(
                 agg_name = agg_cache[cache_key]
             else:
                 # Check if the aggregated column already exists in the data
-                expected_agg_name = f"{calc_params[0]}_{calc_params[1]}_agg"
+                expected_agg_name = get_agg_column_name(calc_params[0], calc_params[1])
                 if expected_agg_name in cd.data.columns:
                     agg_name = expected_agg_name
                 else:

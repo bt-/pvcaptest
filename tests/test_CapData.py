@@ -1579,6 +1579,21 @@ class TestAggSensors():
             assert hasattr(cd, 'aggs_' + agg_col)
             assert getattr(cd, 'aggs_' + agg_col).equals(cd.data[agg_col].to_frame())
         
+    def test_no_duplicating_agg_column(self, meas):
+        """Test that agg_sensors does not create duplicate aggregation columns 
+        in CapData.data. Aggregation columns may already exist if
+        process_regression_columns was run first.
+        """
+        meas.data['irr_poa_pyran_mean_agg'] = meas.data[[
+            'met1_poa_pyranometer',
+            'met2_poa_pyranometer',
+        ]].mean(axis=1)
+        meas.agg_sensors(agg_map={'irr_poa_pyran': 'mean'})
+        assert 'irr_poa_pyran_mean_agg' in meas.data.columns
+        # Should be one column which will return a series not a DataFrame
+        assert len(set(meas.data.columns)) == len(meas.data.columns)
+        assert isinstance(meas.data['irr_poa_pyran_mean_agg'], pd.Series)
+
 class TestFilterSensors():
     def test_perc_diff_none(self, meas):
         rows_before_flt = meas.data_filtered.shape[0]

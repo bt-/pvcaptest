@@ -2070,10 +2070,7 @@ class CapData(object):
         """
         columns_to_aggregate = self.loc[group_id]
         agg_result = columns_to_aggregate.agg(agg_func, axis=1)
-        if isinstance(agg_func, str):
-            col_name = group_id + '_' + agg_func + '_agg'
-        else:
-            col_name = group_id + '_' + agg_func.__name__ + '_agg'
+        col_name = util.get_agg_column_name(group_id, agg_func)
         agg_result = agg_result.rename(col_name).to_frame()
         if verbose:
             col_name_to_print = copy.copy(col_name)
@@ -2225,6 +2222,12 @@ class CapData(object):
         agg_names = {}
         agg_map, rename_map, subgroup_rename_map = self.expand_agg_map(agg_map)
         for group_id, agg_func in agg_map.items():
+            col_name = util.get_agg_column_name(group_id, agg_func)
+            if col_name in self.data.columns:
+                if verbose:
+                    print('Skipping aggregation of {} as column {}'
+                    ' already exists'.format(group_id, col_name))
+                continue
             if self.loc[group_id].shape[1] == 1:
                 continue
             agg_result, col_name = self.agg_group(

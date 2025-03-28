@@ -1,4 +1,5 @@
 import pytest
+import copy
 import numpy as np
 import pandas as pd
 
@@ -106,14 +107,6 @@ class TestReindexDatetime():
 @pytest.fixture
 def nested_calc_dict():
     """Create a nested dictionary for testing update_by_path."""
-    # def test_func1(**kwargs):
-    #     return kwargs
-    # def test_func2(**kwargs):
-    #     return kwargs
-    # def test_func3(**kwargs):
-    #     return kwargs
-    # def test_func4(**kwargs):
-    #     return kwargs
 
     class DummyCapData(object):
         def __init__(self):
@@ -131,21 +124,36 @@ def nested_calc_dict():
         def test_func4(self, **kwargs):
             self.test_func4_kwargs = kwargs
             self.data['test_func4'] = np.full(10, 4)
+        def agg_group(self, group_id, agg_func, **kwargs):
+            self.agg_group_kwargs = kwargs
+            col_name = group_id + '_' + agg_func
+            self.data[col_name] = np.full(10, 5)
+            return col_name
     
     dummy_cd = DummyCapData()
+    dummy_cd.column_groups = {
+        'real_pwr_mtr': ['metered_power_kw'],
+        'irr_poa': ['pyran1', 'pyran2'],
+        'temp_amb': ['temp_amb1', 'temp_amb2'],
+        'wind_speed': ['wind_speed1', 'wind_speed2'],
+        'irr_rpoa': ['irr_rpoa1', 'irr_rpoa2']
+    }
 
     test_dict = {
-        'power_tc': (dummy_cd.test_func1, {
+        'power_tc': (DummyCapData.test_func1, {
             'power': 'real_pwr_mtr',
-            'cell_temp': (dummy_cd.test_func2, {
-                'poa': 'irr_poa',
-                'bom': (dummy_cd.test_func3, {
-                    'poa':'irr_poa', 'temp_amb':'temp_amb', 'wind_speed':'wind_speed'})
+            'cell_temp': (DummyCapData.test_func2, {
+                'poa': ('irr_poa', 'mean'),
+                'bom': (DummyCapData.test_func3, {
+                    'poa':('irr_poa', 'mean'),
+                    'temp_amb':('temp_amb', 'mean'),
+                    'wind_speed':('wind_speed', 'mean')
+                })
             })
         }),
-        'irr_total': (dummy_cd.test_func4, {
-            'poa': 'irr_poa',
-            'rpoa': 'irr_rpoa',
+        'irr_total': (DummyCapData.test_func4, {
+            'poa': ('irr_poa', 'mean'),
+            'rpoa': ('irr_rpoa', 'mean'),
         }),
     }
     return (dummy_cd, test_dict)
@@ -194,7 +202,8 @@ class TestProcessRegCols():
     """Test the process_reg_cols function."""
     def test_modifies_original_calc_params(self, nested_calc_dict):
         dummy_cd, test_dict = nested_calc_dict
-        util.process_reg_cols(test_dict)
+        dummy_cd.regression_cols = copy.deepcopy(test_dict)
+        util.process_reg_cols(test_dict, cd=dummy_cd)
         expected_modified_reg_cols = {
             'power_tc': 'test_func1',
             'irr_total': 'test_func4',
@@ -203,13 +212,28 @@ class TestProcessRegCols():
         # correct kwargs in the correct order based on columns added to the
         # data DataFrame attribute and the kwargs attributes
         assert isinstance(dummy_cd.data, pd.DataFrame)
-        assert dummy_cd.data.shape == (10, 4)
-        expected_columns = pd.Index(['test_func3', 'test_func2', 'test_func1', 'test_func4'])
+        print(dummy_cd.data)
+        print(dummy_cd.regression_cols)
+        assert dummy_cd.data.shape == (10, 8)
+        expected_columns = pd.Index([
+            'irr_poa_mean',
+            'temp_amb_mean',
+            'wind_speed_mean',
+            'test_func3',
+            'test_func2',
+            'test_func1',
+            'irr_rpoa_mean',
+            'test_func4'
+        ])
         assert dummy_cd.data.columns.equals(expected_columns)
-        assert dummy_cd.test_func1_kwargs == {'power':'real_pwr_mtr', 'cell_temp': 'test_func2'}
-        assert dummy_cd.test_func2_kwargs == {'poa': 'irr_poa', 'bom': 'test_func3'}
+        assert dummy_cd.test_func1_kwargs == {
+            'power':'metered_power_kw', 'cell_temp': 'test_func2'}
+        assert dummy_cd.test_func2_kwargs == {'poa': 'irr_poa_mean', 'bom': 'test_func3'}
         assert dummy_cd.test_func3_kwargs == {
-            'poa':'irr_poa', 'temp_amb':'temp_amb', 'wind_speed':'wind_speed'}
+            'poa':'irr_poa_mean',
+            'temp_amb':'temp_amb_mean',
+            'wind_speed':'wind_speed_mean'
+        }
         # check that reg_cols is rolled up all the way correctly
         for k, v in expected_modified_reg_cols.items():
             assert k in test_dict
