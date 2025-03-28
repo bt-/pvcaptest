@@ -2018,22 +2018,6 @@ class CapData(object):
         self.removed = []
         self.kept = []
 
-    def reset_agg(self):
-        """
-        Remove aggregation columns from data and data_filtered attributes.
-
-        Does not reset filtering of data or data_filtered.
-        """
-        if self.pre_agg_cols is None:
-            return warnings.warn('Nothing to reset; agg_sensors has not been'
-                                 'used.')
-        else:
-            self.data = self.data[self.pre_agg_cols].copy()
-            self.data_filtered = self.data_filtered[self.pre_agg_cols].copy()
-
-            self.column_groups = self.pre_agg_trans.copy()
-            self.regression_cols = self.pre_agg_reg_trans.copy()
-
     def __get_poa_col(self):
         """
         Return poa column name from `column_groups`.
@@ -2071,6 +2055,7 @@ class CapData(object):
         columns_to_aggregate = self.loc[group_id]
         agg_result = columns_to_aggregate.agg(agg_func, axis=1)
         col_name = util.get_agg_column_name(group_id, agg_func)
+        self.column_groups.setdefault('agg', []).append(col_name)
         agg_result = agg_result.rename(col_name).to_frame()
         if verbose:
             col_name_to_print = copy.copy(col_name)
@@ -2237,11 +2222,6 @@ class CapData(object):
         self.data_filtered = self.data.copy()
         self.rename_cols(rename_map)
         self.agg_name_mapper = agg_names
-        # update column_groups attribute
-        self.column_groups['agg'] = [
-            rename_map[name] if name in rename_map.keys() else name
-            for name in agg_names.values()
-        ]
         self.create_column_group_attributes()
         self.create_agg_attributes()
 
@@ -2263,6 +2243,9 @@ class CapData(object):
         self.regression_cols_preprocess = copy.deepcopy(self.regression_cols)
         util.process_reg_cols(self.regression_cols, cd=self)
         self.data_filtered = self.data.copy()
+        self.create_column_group_attributes()
+        if 'agg' in self.column_groups:
+            self.create_agg_attributes()
 
     def data_columns_to_excel(self, sort_by_reversed_names=True):
         """

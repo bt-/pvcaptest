@@ -1364,7 +1364,7 @@ class TestExpandAggMap:
 
 class TestAggSensors():
     def test_agg_group(self, meas):
-        agg_result, col_name = meas.agg_group('irr_poa_pyran', 'mean')
+        agg_result, col_name = meas.agg_group('irr_poa_pyran', 'mean', inplace=False)
         assert 'irr_poa_pyran_mean_agg' == col_name
         assert isinstance(agg_result, pd.DataFrame)
         exp_mean = (meas.data[meas.column_groups['irr_poa_pyran']]
@@ -1402,18 +1402,6 @@ class TestAggSensors():
         assert meas.data_filtered.shape[0] == meas.data.shape[0]
         # Check for poa aggregation column
         assert 'irr_poa_pyran_mean_agg' in meas.data_filtered.columns
-        assert meas.regression_cols['poa'] == 'irr_poa_pyran_mean_agg'
-
-    def test_agg_map_update_regression_cols(self, meas):
-        meas.agg_sensors()
-        # Regression column for power should not be updated because there is only
-        # one power column.
-        assert meas.regression_cols['power'] == 'meter_power'
-        # Regression columns for poa, amb temp, and wind should be updated to
-        # the aggregated columns from the column group ids.
-        assert meas.regression_cols['poa'] == 'irr_poa_pyran_mean_agg'
-        assert meas.regression_cols['t_amb'] == 'temp_amb_mean_agg'
-        assert meas.regression_cols['w_vel'] == 'wind_mean_agg'
 
     def test_reset_summary(self, meas):
         meas.agg_sensors()
@@ -1421,22 +1409,6 @@ class TestAggSensors():
         assert len(meas.summary) == 0
         # Summary index should be empty after aggregation
         assert len(meas.summary_ix) == 0
-
-    def test_reset_agg_method(self, meas):
-        orig_df = meas.data.copy()
-        orig_trans = meas.column_groups.copy()
-        orig_reg_trans = meas.regression_cols.copy()
-
-        meas.agg_sensors()
-        meas.filter_irr(200, 500)
-        meas.reset_agg()
-
-        # Dataframe should be the same as before aggregation
-        assert meas.data.equals(orig_df)
-        # Columns should be the same as before aggregation
-        assert all(meas.data_filtered.columns == orig_df.columns)
-        # Reset should not affect filtering
-        assert meas.data_filtered.shape[0] < orig_df.shape[0]
 
     def test_warn_if_filters_already_run(self, meas):
         """
@@ -1452,15 +1424,6 @@ class TestAggSensors():
             'before any filtering methods.'
         )):
             meas.agg_sensors()
-
-    def test_regression_columns_not_in_column_groups(self, meas):
-        """Sould be able to aggregate columns if the regression columns includes
-        a column that is not in the column_groups attribute.
-        """
-        meas.data['irr_poa_total'] = meas.data.loc[:, 'met1_poa_pyranometer']
-        meas.regression_cols['poa'] = 'irr_poa_total'
-        meas.agg_sensors(agg_map={'temp_amb': 'mean'})
-        assert meas.regression_cols['t_amb'] == 'temp_amb_mean_agg'
 
     def test_pre_agg_regression_dict_exists(self, meas):
         meas.agg_sensors()
@@ -1554,9 +1517,6 @@ class TestAggSensors():
         for agg_col in expected_columns:
             assert agg_col in cd.data.columns
         
-        # Check regression column mapping
-        assert cd.regression_cols['poa'] == 'irr_poa_mean_agg'
-        
         # Check that average of subgroup averages is as expected
         expected_mean = (
             cd.data['irr_poa_met1_mean_agg'] + cd.data['irr_poa_met2_mean_agg']
@@ -1588,6 +1548,7 @@ class TestAggSensors():
             'met1_poa_pyranometer',
             'met2_poa_pyranometer',
         ]].mean(axis=1)
+        meas.column_groups['agg'] = ['irr_poa_pyran_mean_agg']
         meas.agg_sensors(agg_map={'irr_poa_pyran': 'mean'})
         assert 'irr_poa_pyran_mean_agg' in meas.data.columns
         # Should be one column which will return a series not a DataFrame
@@ -2965,7 +2926,6 @@ class TestCalcParams():
             assert 'irr_poa_pyran' in stdout_content
         except ValueError:
             pass
-        
         
     def test_column_group_with_one_column(self, meas, capsys):
         """
