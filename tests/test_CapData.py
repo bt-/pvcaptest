@@ -2994,5 +2994,54 @@ class TestCalcParams():
             expected_values
         )
         
+    def test_e_total(self, pvsyst):
+        """
+        Test the e_total method which calculates the total irradiance for bifacial modules.
+        """
+        # Get the length of existing data
+        data_length = len(pvsyst.data)
+        
+        # Add test columns to the data with matching length
+        pvsyst.data['GlobInc'] = np.linspace(800, 1000, data_length)  # Front irradiance
+        pvsyst.data['RearIrr'] = np.linspace(100, 200, data_length)  # Rear irradiance
+        
+        # Test 1: Using default values (should use defaults 0.7 and 1 since attributes aren't set)
+        pvsyst.e_total('GlobInc', 'RearIrr')
+        
+        # Check that the e_total column was added to the data
+        assert 'e_total' in pvsyst.data.columns
+        
+        # Check that the values were calculated correctly with default parameters
+        expected_values = (pvsyst.data['GlobInc'] + pvsyst.data['RearIrr'] * 0.7).rename('e_total')
+        pd.testing.assert_series_equal(
+            pvsyst.data['e_total'],
+            expected_values
+        )
+        
+        # Test 2: Using explicit parameter values
+        pvsyst.e_total('GlobInc', 'RearIrr', bifaciality=0.8, bifacial_frac=0.5)
+        
+        # Check that the values were calculated correctly with custom parameters
+        expected_values = (pvsyst.data['GlobInc'] + pvsyst.data['RearIrr'] * 0.8 * 0.5).rename('e_total')
+        pd.testing.assert_series_equal(
+            pvsyst.data['e_total'],
+            expected_values
+        )
+        
+        # Test 3: Using class attributes
+        # Set attributes on the CapData instance
+        pvsyst.bifaciality = 0.6
+        pvsyst.bifacial_frac = 0.75
+        
+        # Call method with None parameters (should use class attributes)
+        pvsyst.e_total('GlobInc', 'RearIrr')
+        
+        # Check that the values were calculated correctly using class attributes
+        expected_values = (pvsyst.data['GlobInc'] + pvsyst.data['RearIrr'] * 0.6 * 0.75).rename('e_total')
+        pd.testing.assert_series_equal(
+            pvsyst.data['e_total'],
+            expected_values
+        )
+        
 if __name__ == '__main__':
     unittest.main()

@@ -148,3 +148,27 @@ def pvsyst_rear_irradiance(globbak, backshd):
         Sum of global rear irradiance and rear shading and IAM losses.
     """
     return globbak + backshd
+
+def e_total(poa, rpoa, bifaciality=0.7, bifacial_frac=1):
+    """
+    Calculate total irradiance from POA and rear irradiance.
+    
+    Parameters
+    ----------
+    poa : numeric or Series
+        POA irradiance (W/m^2).
+    rpoa : numeric or Series
+        Rear irradiance (W/m^2).
+    bifaciality : numeric, default 0.7
+        Bifaciality factor.
+    bifacial_frac : numeric, default 1
+        Fraction of total array nameplate power that is bifacial. Pass to calculate
+        total plane of array irradiance for plants with a mix of monofacial and
+        bifacial modules.
+
+    Returns
+    -------
+    numeric or Series
+        Total plane of array irradiance.
+    """
+    return poa + rpoa * bifaciality * bifacial_frac

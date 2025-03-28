@@ -135,3 +135,37 @@ class TestPVsystRearIrradiance:
         pd.testing.assert_series_equal(
             calcparams.pvsyst_rear_irradiance(globbak, backshd), exp_results
         )
+
+
+class TestEtotal:
+    def test_numeric_inputs(self):
+        poa = 100
+        rear = 10
+        assert calcparams.e_total(poa, rear) == 107
+    
+    def test_numeric_non_default_bifaciality(self):
+        poa = 100
+        rear = 10
+        assert calcparams.e_total(poa, rear, bifaciality=0.5) == 105
+
+    def test_numeric_non_default_bifi_frac(self):
+        poa = 100
+        rear = 10
+        assert calcparams.e_total(poa, rear, bifaciality=1, bifacial_frac=0.5) == 105
+
+    def test_numeric_non_default_bifaciality_and_bifacial_frac(self):
+        poa = 100
+        rear = 20
+        assert calcparams.e_total(poa, rear, bifaciality=0.5, bifacial_frac=0.5) == 105
+
+    def test_series_inputs(self):
+        ix = pd.date_range(start="1/1/2021 12:00", freq="H", periods=3)
+        poa = pd.Series([100, 110, 120], index=ix)
+        rear = pd.Series([100, 150, 200], index=ix)
+
+        exp_results = pd.Series([170, 215, 260], index=ix)
+
+        pd.testing.assert_series_equal(
+            calcparams.e_total(poa, rear), exp_results,
+            check_dtype=False
+        )

@@ -3515,7 +3515,46 @@ class CapData(object):
             globbak=self.data[globbak],
             backshd=self.data[backshd]
         )
+    
+    def e_total(self, poa, rpoa, bifaciality=None, bifacial_frac=None):
+        """
+        Calculate total irradiance from POA and rear irradiance.
         
+        Wraps the calcparams.e_total function to calculate the total irradiance
+        for bifacial modules, accounting for bifaciality factor and the fraction
+        of the array that is bifacial.
+        
+        Parameters
+        ----------
+        poa : str
+            Column name for POA irradiance (W/m^2).
+        rpoa : str
+            Column name for rear irradiance (W/m^2).
+        bifaciality : numeric, default None
+            Bifaciality factor. If None, uses value from CapData.bifaciality if available,
+            otherwise defaults to 0.7.
+        bifacial_frac : numeric, default None
+            Fraction of total array nameplate power that is bifacial. If None, uses value
+            from CapData.bifacial_frac if available, otherwise defaults to 1.
+        
+        Returns
+        -------
+        None
+            Adds column labeled 'e_total' to CapData.data attribute.
+        """
+        # Use instance attributes if available, otherwise use defaults
+        if bifaciality is None:
+            bifaciality = getattr(self, 'bifaciality', 0.7)
+            
+        if bifacial_frac is None:
+            bifacial_frac = getattr(self, 'bifacial_frac', 1)
+        
+        self.data['e_total'] = calcparams.e_total(
+            poa=self.data[poa],
+            rpoa=self.data[rpoa],
+            bifaciality=bifaciality,
+            bifacial_frac=bifacial_frac
+        )
 
 if __name__ == "__main__":
     import doctest
