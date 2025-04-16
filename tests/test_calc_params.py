@@ -6,18 +6,31 @@ from captest import calcparams
 class TestTempCorrectPower:
     """Test correction of power by temperature coefficient."""
 
-    def test_output_type_numeric(self):
-        assert isinstance(calcparams.temp_correct_power(10, -0.37, 50), float)
-
-    def test_output_type_series(self):
-        assert isinstance(
-            calcparams.temp_correct_power(pd.Series([10, 12, 15]), -0.37, 50), pd.Series
+    def test_output_type_numeric(self, capsys):
+        """Check output type matches input type and check explanation output"""
+        power_tc = calcparams.temp_correct_power(10, -0.37, 50)
+        assert isinstance(power_tc, float)
+        captured = capsys.readouterr()
+        assert captured.out.rstrip("\n") == (
+            'Calculating and adding "temp_correct_power" column as '
+            '(10) / (1 + ((-0.37 / 100) * (50 - 25)))'
         )
 
-    def test_high_temp_higher_power(self):
+    def test_output_type_series(self, capsys):
+        power_tc = calcparams.temp_correct_power(pd.Series([10, 12, 15], name='power_col'), -0.37, 50)
+        assert isinstance(power_tc, pd.Series)
+        captured = capsys.readouterr()
+        assert captured.out.rstrip("\n") == (
+            'Calculating and adding "temp_correct_power" column as '
+            '(power_col) / (1 + ((-0.37 / 100) * (50 - 25)))'
+        )
+
+    def test_high_temp_higher_power(self, capsys):
         power = 10
-        corr_power = calcparams.temp_correct_power(power, -0.37, 50)
+        corr_power = calcparams.temp_correct_power(power, -0.37, 50, verbose=False)
         assert corr_power > power
+        captured = capsys.readouterr()
+        assert captured.out == ''
 
     def test_low_temp_lower_power(self):
         power = 10

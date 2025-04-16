@@ -49,23 +49,18 @@ def temp_correct_power(power, power_temp_coeff, cell_temp, base_temp=25, verbose
         (1 + ((power_temp_coeff / 100) * (cell_temp - base_temp)))
     )
     if verbose:
-        if isinstance(power, pd.Series) and isinstance(cell_temp, pd.Series):
-            print(
-                'Calculating and adding "temp_correct_power" column as '
-                f'"{power.name}" / 1 + (({power_temp_coeff} / 100) * ("{cell_temp.name}" - {base_temp}))'
-            )
-        elif isinstance(power, pd.Series):
-            print(
-                'temporary message'
-            )
-        elif isinstance(cell_temp, pd.Series):
-            print(
-                'temporary message'
-            )
+        if isinstance(power, pd.Series):
+            power_id = power.name
         else:
-            print(
-                'temporary message'
-            )
+            power_id = str(power)
+        if isinstance(cell_temp, pd.Series):
+            cell_temp_id = cell_temp.name
+        else:
+            cell_temp_id = str(cell_temp)
+        print(
+            'Calculating and adding "temp_correct_power" column as '
+            f'({power_id}) / (1 + (({power_temp_coeff} / 100) * ({cell_temp_id} - {base_temp})))'
+        )
     return corr_power
 
 
