@@ -18,7 +18,29 @@ EMP_HEAT_COEFF = {
 }
 
 
-def temp_correct_power(power, power_temp_coeff, cell_temp, base_temp=25, verbose=True):
+def get_param_ids(params):
+    """Get identifier strings for parameters.
+
+    For each parameter, returns its name attribute if it has one,
+    otherwise returns its string representation.
+
+    Parameters
+    ----------
+    params : dict
+        Dictionary of parameter values to get identifiers for
+
+    Returns
+    -------
+    dict
+        Dictionary mapping parameter names to their identifier strings
+    """
+    return {
+        name: param.name if hasattr(param, "name") else str(param)
+        for name, param in params.items()
+    }
+
+
+def temp_correct_power(**kwargs):
     """Apply temperature correction to PV power.
 
     Divides `power` by the temperature correction, so low power values that
@@ -44,29 +66,22 @@ def temp_correct_power(power, power_temp_coeff, cell_temp, base_temp=25, verbose
     type matches `power`
         Power corrected for temperature.
     """
+    kwargs.setdefault('base_temp', 25)
     corr_power = (
-        power /
-        (1 + ((power_temp_coeff / 100) * (cell_temp - base_temp)))
+        kwargs['power'] /
+        (1 + ((kwargs['power_temp_coeff'] / 100) * (kwargs['cell_temp'] - kwargs['base_temp'])))
     )
-    if verbose:
-        if isinstance(power, pd.Series):
-            power_id = power.name
-        else:
-            power_id = str(power)
-        if isinstance(cell_temp, pd.Series):
-            cell_temp_id = cell_temp.name
-        else:
-            cell_temp_id = str(cell_temp)
+    if kwargs.get('verbose', True):
+        param_ids = get_param_ids(kwargs)
         print(
             'Calculating and adding "temp_correct_power" column as '
-            f'({power_id}) / (1 + (({power_temp_coeff} / 100) * ({cell_temp_id} - {base_temp})))'
+            f'({param_ids["power"]}) / (1 + (({param_ids["power_temp_coeff"]} / 100) * '
+            f'({param_ids["cell_temp"]} - {param_ids["base_temp"]})))'
         )
     return corr_power
 
 
-def back_of_module_temp(
-    poa, temp_amb, wind_speed, module_type="glass_cell_poly", racking="open_rack", verbose=True
-):
+def back_of_module_temp(**kwargs):
     """Calculate back of module temperature from measured weather data.
 
     Calculate back of module temperature from POA irradiance, ambient
@@ -94,18 +109,18 @@ def back_of_module_temp(
     numeric or Series
         Back of module temperatures.
     """
-    a = EMP_HEAT_COEFF[racking][module_type]["a"]
-    b = EMP_HEAT_COEFF[racking][module_type]["b"]
-    if verbose:
-        poa_id = poa.name if hasattr(poa, "name") else str(poa)
-        temp_amb_id = temp_amb.name if hasattr(temp_amb, "name") else str(temp_amb)
-        wind_speed_id = wind_speed.name if hasattr(wind_speed, "name") else str(wind_speed)
+    kwargs.setdefault('racking', 'open_rack')
+    kwargs.setdefault('module_type', 'glass_cell_poly')
+    a = EMP_HEAT_COEFF[kwargs['racking']][kwargs['module_type']]["a"]
+    b = EMP_HEAT_COEFF[kwargs['racking']][kwargs['module_type']]["b"]
+    if kwargs.get('verbose', True):
+        param_ids = get_param_ids(kwargs)
         print(
             'Calculating and adding "bom_temp" column as '
-            f'{poa_id} * e^({a} + {b} * {wind_speed_id}) + {temp_amb_id}. '
-            f'Coefficients a and b assume "{module_type}" modules and "{racking}" racking.'
+            f'{param_ids["poa"]} * e^({a} + {b} * {param_ids["wind_speed"]}) + {param_ids["temp_amb"]}. '
+            f'Coefficients a and b assume "{kwargs['module_type']}" modules and "{kwargs['racking']}" racking.'
         )
-    return poa * np.exp(a + b * wind_speed) + temp_amb
+    return kwargs['poa'] * np.exp(a + b * kwargs['wind_speed']) + kwargs['temp_amb']
 
 
 def cell_temp(bom, poa, module_type="glass_cell_poly", racking="open_rack", verbose=True):
