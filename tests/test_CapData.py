@@ -589,7 +589,8 @@ class TestIndexCapdata():
         to map to the new aggregated column."""
         # filter data_filtered to make check of row count for filtered=False meaningful
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
-        meas.agg_sensors(agg_map={'irr_poa_pyran': 'mean'})
+        meas.regression_cols = {'poa': ('irr_poa_pyran', 'mean')}
+        meas.process_regression_columns()
         out = pvc.index_capdata(meas, 'poa', filtered=False)
         assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data['irr_poa_pyran_mean_agg'].to_frame())
@@ -646,7 +647,11 @@ class TestIndexCapdata():
         """
         # filter data_filtered to make check of row count for filtered=False meaningful
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
-        meas.agg_sensors(agg_map={'irr_poa_pyran': 'mean', 'temp_amb': 'mean'})
+        meas.regression_cols = {
+            'poa': ('irr_poa_pyran', 'mean'),
+            't_amb': ('temp_amb', 'mean'),
+        }
+        meas.process_regression_columns()
         out = pvc.index_capdata(meas, ['poa', 't_amb'], filtered=False)
         assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data[[
@@ -663,6 +668,7 @@ class TestIndexCapdata():
         # filter data_filtered to make check of row count for filtered=False meaningful
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         meas.agg_sensors(agg_map={'irr_poa_pyran': 'mean'})
+        meas.regression_cols = {'poa': 'irr_poa_pyran_mean_agg', 't_amb': 'temp_amb'}
         out = pvc.index_capdata(meas, ['poa', 't_amb'], filtered=False)
         assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data[[
@@ -751,11 +757,13 @@ class TestIndexCapdata():
         Test that passing the label `regcols` returns the columns of
         Capdata that are identified in `regression_cols`.
         """
-        meas.agg_sensors(agg_map={
-            'irr_poa_pyran': 'mean',
-            'temp_amb': 'mean',
-            'wind': 'mean',
-        })
+        meas.regression_cols = {
+            'power': 'meter_power',
+            'poa': ('irr_poa_pyran', 'mean'),
+            'temp_amb': ('temp_amb', 'mean'),
+            'wind': ('wind', 'mean'),
+        }
+        meas.process_regression_columns()
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         out = pvc.index_capdata(meas, 'regcols', filtered=False)
         assert isinstance(out, pd.DataFrame)
