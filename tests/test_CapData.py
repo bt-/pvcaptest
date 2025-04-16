@@ -542,11 +542,13 @@ class TestIndexCapdata():
         Test that passing the label `regcols` returns the columns of
         Capdata.data_filtered that are identified in `regression_cols`.
         """
-        meas.agg_sensors(agg_map={
-            'irr_poa_pyran': 'mean',
-            'temp_amb': 'mean',
-            'wind': 'mean',
-        })
+        meas.regression_cols = {
+            'power': 'meter_power',
+            'poa': ('irr_poa_pyran', 'mean'),
+            'temp_amb': ('temp_amb', 'mean'),
+            'wind': ('wind', 'mean'),
+        }
+        meas.process_regression_columns()
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         out = pvc.index_capdata(meas, 'regcols', filtered=True)
         assert isinstance(out, pd.DataFrame)
