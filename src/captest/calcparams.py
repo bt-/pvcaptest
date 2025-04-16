@@ -18,7 +18,7 @@ EMP_HEAT_COEFF = {
 }
 
 
-def temp_correct_power(power, power_temp_coeff, cell_temp, base_temp=25):
+def temp_correct_power(power, power_temp_coeff, cell_temp, base_temp=25, verbose=True):
     """Apply temperature correction to PV power.
 
     Divides `power` by the temperature correction, so low power values that
@@ -48,11 +48,29 @@ def temp_correct_power(power, power_temp_coeff, cell_temp, base_temp=25):
         power /
         (1 + ((power_temp_coeff / 100) * (cell_temp - base_temp)))
     )
+    if verbose:
+        if isinstance(power, pd.Series) and isinstance(cell_temp, pd.Series):
+            print(
+                'Calculating and adding "temp_correct_power" column as '
+                f'"{power.name}" / 1 + (({power_temp_coeff} / 100) * ("{cell_temp.name}" - {base_temp}))'
+            )
+        elif isinstance(power, pd.Series):
+            print(
+                'temporary message'
+            )
+        elif isinstance(cell_temp, pd.Series):
+            print(
+                'temporary message'
+            )
+        else:
+            print(
+                'temporary message'
+            )
     return corr_power
 
 
 def back_of_module_temp(
-    poa, temp_amb, wind_speed, module_type="glass_cell_poly", racking="open_rack"
+    poa, temp_amb, wind_speed, module_type="glass_cell_poly", racking="open_rack", verbose=True
 ):
     """Calculate back of module temperature from measured weather data.
 
@@ -144,7 +162,7 @@ def cell_temp(bom, poa, module_type="glass_cell_poly", racking="open_rack", verb
     return bom + (poa / 1000) * EMP_HEAT_COEFF[racking][module_type]["del_tcnd"]
 
 
-def avg_typ_cell_temp(poa, cell_temp):
+def avg_typ_cell_temp(poa, cell_temp, verbose=True):
     """Calculate irradiance weighted cell temperature.
 
     Parameters
@@ -161,7 +179,7 @@ def avg_typ_cell_temp(poa, cell_temp):
     """
     return (poa * cell_temp).sum() / poa.sum()
 
-def pvsyst_rear_irradiance(globbak, backshd):
+def pvsyst_rear_irradiance(globbak, backshd, verbose=True):
     """Calculate the sum of PVsyst's global rear irradiance and rear shading and IAM losses.
 
     Parameters
@@ -178,7 +196,7 @@ def pvsyst_rear_irradiance(globbak, backshd):
     """
     return globbak + backshd
 
-def e_total(poa, rpoa, bifaciality=0.7, bifacial_frac=1):
+def e_total(poa, rpoa, bifaciality=0.7, bifacial_frac=1, verbose=True):
     """
     Calculate total irradiance from POA and rear irradiance.
     

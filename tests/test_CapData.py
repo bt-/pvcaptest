@@ -2874,6 +2874,42 @@ class TestCalcParams():
         }
         assert meas.regression_cols == exp_reg_cols_after_process
 
+    def test_power_tc_poa_no_output(self, meas, capsys):
+        """
+        Test processing of regression column that requires calculating power
+        temperature correction and mean for poa and rpoa.
+
+        Check that setting verbose to False results in no output.
+        """
+        # rename metered power column so it doesn't match column group id without
+        # affecting other tests
+        meas.data.rename(columns={'meter_power': 'sel735_ac_kw'}, inplace=True)
+        meas.reset_filter()
+        meas.column_groups['meter_power'] = ['sel735_ac_kw']
+        orig_reg_cols = {
+            'power_tc': (pvc.CapData.power_tc, {
+                'power': 'meter_power',
+                'cell_temp': (pvc.CapData.cell_temp, {
+                    'bom': ('temp_mod_', 'mean'),
+                    'poa': ('irr_poa_pyran', 'mean')})
+            }),
+            'poa': ('irr_poa_pyran', 'mean'),
+        }
+
+        meas.power_temp_coeff = -0.36
+        meas.base_temp = 25
+        meas.module_type = 'glass_cell_glass'
+        meas.racking = 'open_rack'
+        meas.regression_cols = copy.deepcopy(orig_reg_cols)
+
+        # Process regression columns and capture stdout using pytest's capsys fixture
+        meas.process_regression_columns(verbose=False)
+
+        # Get captured stdout
+        captured = capsys.readouterr()
+        stdout_content = captured.out
+        assert stdout_content == ''
+
     def test_group_id_wo_agg_method(self, meas, capsys):
         """
         Test that a warning is issued when a column group ID is passed without an

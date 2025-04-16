@@ -2225,11 +2225,18 @@ class CapData(object):
         self.create_column_group_attributes()
         self.create_agg_attributes()
 
-    def process_regression_columns(self):
+    def process_regression_columns(self, verbose=True):
         """
         Walk the regression column dictionary and calculate parameters.
 
         See util.process_reg_cols for additional documentation.
+        
+        Parameters
+        ----------
+        verbose : bool, default True
+            By default prints summary of aggregations and parameter calculations
+            performed while traversing the `regression_cols` dictionary.
+            Set to False to prevent all output.
         """
         if not len(self.summary) == 0:
             warnings.warn('The data_filtered attribute has been overwritten '
@@ -2241,7 +2248,7 @@ class CapData(object):
         self.summary = []
 
         self.regression_cols_preprocess = copy.deepcopy(self.regression_cols)
-        util.process_reg_cols(self.regression_cols, cd=self)
+        util.process_reg_cols(self.regression_cols, cd=self, verbose=verbose)
         self.data_filtered = self.data.copy()
         self.create_column_group_attributes()
         if 'agg' in self.column_groups:
@@ -3395,7 +3402,7 @@ class CapData(object):
                 self.column_groups.data, orient='index'
         ).stack().to_frame().droplevel(1).to_excel(save_to, header=False)
 
-    def bom_temp(self, poa=None, temp_amb=None, wind_speed=None, module_type=None, racking=None):
+    def bom_temp(self, poa=None, temp_amb=None, wind_speed=None, module_type=None, racking=None, verbose=True):
         """
         Calculate back-of-module (bom) temperature from Sandia Module Temperature Model.
         
@@ -3411,6 +3418,9 @@ class CapData(object):
             By default uses value from CapData.module_type
         racking : str, default None
             By default uses value from CapData.racking
+        verbose : bool, default True
+            Set to False to not print calculation explanation.
+            
         Returns
         -------
         None
@@ -3421,10 +3431,11 @@ class CapData(object):
             temp_amb=self.data[temp_amb],
             wind_speed=self.data[wind_speed],
             module_type=self.module_type,
-            racking=self.racking
+            racking=self.racking,
+            verbose=verbose
         )
-
-    def power_tc(self, power, cell_temp, power_temp_coeff=None, base_temp=None):
+    
+    def power_tc(self, power, cell_temp, power_temp_coeff=None, base_temp=None, verbose=True):
         """
         Calculate temperature corrected power from cell temperature.
 
@@ -3440,6 +3451,9 @@ class CapData(object):
         base_temp : numeric, default None
             By default trys to use a value from self.base_temp attribute. Pass
             a value to use a different base temperature.
+        verbose : bool, default True
+            Set to False to not print calculation explanation.
+            
         Returns
         -------
         None
@@ -3458,10 +3472,11 @@ class CapData(object):
             power=self.data[power],
             cell_temp=self.data[cell_temp],
             power_temp_coeff=power_temp_coeff,
-            base_temp=base_temp
+            base_temp=base_temp,
+            verbose=verbose
         )
         
-    def cell_temp(self, bom, poa, module_type=None, racking=None):
+    def cell_temp(self, bom, poa, module_type=None, racking=None, verbose=True):
         """
         Calculate cell temperature from back-of-module temperature and POA irradiance.
 
@@ -3475,6 +3490,9 @@ class CapData(object):
             By default uses value from CapData.module_type
         racking : str, default None
             By default uses value from CapData.racking
+        verbose : bool, default True
+            Set to False to not print calculation explanation.
+
         Returns
         -------
         None
@@ -3493,10 +3511,11 @@ class CapData(object):
             bom=self.data[bom],
             poa=self.data[poa],
             module_type=module_type,
-            racking=racking
+            racking=racking,
+            verbose=verbose
         )
     
-    def rpoa_pvsyst(self, globbak, backshd):
+    def rpoa_pvsyst(self, globbak, backshd, verbose=True):
         """Calculate the sum of PVsyst's global rear irradiance and rear shading and IAM losses.
 
         Parameters
@@ -3505,6 +3524,8 @@ class CapData(object):
             Column name for global rear irradiance (W/m^2).
         backshd : str
             Column name for rear shading and IAM losses (W/m^2).
+        verbose : bool, default True
+            Set to False to not print calculation explanation.
 
         Returns
         -------
@@ -3513,10 +3534,11 @@ class CapData(object):
         """
         self.data['rpoa_pvsyst'] = calcparams.pvsyst_rear_irradiance(
             globbak=self.data[globbak],
-            backshd=self.data[backshd]
+            backshd=self.data[backshd],
+            verbose=verbose
         )
     
-    def e_total(self, poa, rpoa, bifaciality=None, bifacial_frac=None):
+    def e_total(self, poa, rpoa, bifaciality=None, bifacial_frac=None, verbose=True):
         """
         Calculate total irradiance from POA and rear irradiance.
         
@@ -3536,6 +3558,8 @@ class CapData(object):
         bifacial_frac : numeric, default None
             Fraction of total array nameplate power that is bifacial. If None, uses value
             from CapData.bifacial_frac if available, otherwise defaults to 1.
+        verbose : bool, default True
+            Set to False to not print calculation explanation.
         
         Returns
         -------
@@ -3553,7 +3577,8 @@ class CapData(object):
             poa=self.data[poa],
             rpoa=self.data[rpoa],
             bifaciality=bifaciality,
-            bifacial_frac=bifacial_frac
+            bifacial_frac=bifacial_frac,
+            verbose=verbose
         )
 
 if __name__ == "__main__":

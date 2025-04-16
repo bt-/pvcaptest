@@ -231,6 +231,7 @@ def process_reg_cols(
         dict_path=None,
         cd=None,
         agg_cache=None,
+        verbose=True,
     ):
     """
     Recursively process a regression columns dictionary that includes calculated parameters.
@@ -292,6 +293,9 @@ def process_reg_cols(
     agg_cache : dict, optional
         Cache of already aggregated column groups to avoid redundant calls to agg_group.
         Keys are tuples of (group_id, agg_func) and values are the aggregated column names.
+    verbose : bool, default True
+        Passed to the group aggregations and the parameter calculations. Set to False
+        to prevent all summary output.
     
     Returns
     -------
@@ -319,6 +323,7 @@ def process_reg_cols(
                     dict_path=new_path,
                     cd=cd,
                     agg_cache=agg_cache,
+                    verbose=verbose,
                 )
             elif ((calc_inputs in cd.column_groups) and
                   (len(cd.column_groups[calc_inputs]) == 1)):
@@ -347,12 +352,16 @@ def process_reg_cols(
                 if expected_agg_name in cd.data.columns:
                     agg_name = expected_agg_name
                 else:
-                    agg_name = cd.agg_group(group_id=calc_params[0], agg_func=calc_params[1])
+                    agg_name = cd.agg_group(
+                        group_id=calc_params[0],
+                        agg_func=calc_params[1],
+                        verbose=verbose,
+                    )
                 # Store in cache for future use
                 agg_cache[cache_key] = agg_name
                 
             update_by_path(original_calc_params, dict_path, agg_name)
-            process_reg_cols(original_calc_params, cd=cd, agg_cache=agg_cache)
+            process_reg_cols(original_calc_params, cd=cd, agg_cache=agg_cache, verbose=verbose)
         if isinstance(calc_params[1], dict):
             if all([isinstance(values, str) for values in calc_params[1].values()]):
                 # Check if any values are column group IDs pointing to groups with only one column
@@ -380,12 +389,12 @@ def process_reg_cols(
                 # calcparams module
                 # args or kwargs that are not Series of Data should be attributes of the
                 # CapData instance
-                func(cd, **updated_params)
+                func(cd, **updated_params, verbose=verbose)
                 # Update the original calc_params dictionary at the current path
                 update_by_path(original_calc_params, dict_path, func.__name__)
                 # Recursive call to reprocess again with the modified reg_cols dict
                 # Effect is to process the next layer up in the dict
-                process_reg_cols(original_calc_params, cd=cd, agg_cache=agg_cache)
+                process_reg_cols(original_calc_params, cd=cd, agg_cache=agg_cache, verbose=verbose)
             else:
                 new_path = dict_path + [1]
                 process_reg_cols(
@@ -395,6 +404,7 @@ def process_reg_cols(
                     dict_path=new_path,
                     cd=cd,
                     agg_cache=agg_cache,
+                    verbose=verbose,
                 )
         elif isinstance(calc_params[1], tuple):
             new_path = dict_path + [1]
@@ -405,4 +415,5 @@ def process_reg_cols(
                 dict_path=new_path,
                 cd=cd,
                 agg_cache=agg_cache,
+                verbose=verbose
             )
