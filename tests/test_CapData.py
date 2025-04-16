@@ -1295,7 +1295,13 @@ class TestGetRegCols():
             meas.get_reg_cols()
 
     def test_all_coeffs(self, meas):
-        meas.agg_sensors()
+        meas.regression_cols = {
+            'power': 'meter_power',
+            'poa': ('irr_poa_pyran', 'mean'),
+            't_amb': ('temp_amb', 'mean'),
+            'w_vel': ('wind', 'mean'),
+        }
+        meas.process_regression_columns()
         cols = ['power', 'poa', 't_amb', 'w_vel']
         df = meas.get_reg_cols()
         assert len(df.columns) == 4
@@ -1310,11 +1316,15 @@ class TestGetRegCols():
         Test when agg_sensors resets regression_cols values to a mix of trans keys
         and column names.
         """
+        meas.regression_cols = {
+            'power': 'meter_power',
+            'poa': ('irr_poa_pyran', 'mean'),
+            't_amb': ('temp_amb', 'mean'),
+            'w_vel': ('wind', 'mean'),
+        }
+        meas.process_regression_columns()
         meas.agg_sensors(agg_map={
             'power_inv': 'sum',
-            'irr_poa_pyran': 'mean',
-            'temp_amb': 'mean',
-            'wind': 'mean',
         })
         cols = ['poa', 'power']
         df = meas.get_reg_cols(reg_vars=cols)
