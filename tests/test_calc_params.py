@@ -59,14 +59,25 @@ class TestTempCorrectPower:
 class TestBackOfModuleTemp:
     """Test calculation of back of module (BOM) temperature from weather."""
 
-    def test_float_inputs(self):
+    def test_float_inputs(self, capsys):
         assert calcparams.back_of_module_temp(800, 30, 3) == pytest.approx(48.1671)
+        captured = capsys.readouterr()
+        assert captured.out.rstrip('\n') == (
+            'Calculating and adding "bom_temp" column as '
+            '800 * e^(-3.56 + -0.075 * 3) + 30. '
+            'Coefficients a and b assume "glass_cell_poly" modules and "open_rack" racking.'
+        )
 
-    def test_series_inputs(self):
+    def test_float_inputs_no_output(self, capsys):
+        assert calcparams.back_of_module_temp(800, 30, 3, verbose=False) == pytest.approx(48.1671)
+        captured = capsys.readouterr()
+        assert captured.out == ''
+
+    def test_series_inputs(self, capsys):
         ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
-        poa = pd.Series([805, 810, 812], index=ix)
-        temp_amb = pd.Series([26, 27, 27.5], index=ix)
-        wind = pd.Series([0.5, 1, 2.5], index=ix)
+        poa = pd.Series([805, 810, 812], index=ix, name='poa')
+        temp_amb = pd.Series([26, 27, 27.5], index=ix, name='temp_amb')
+        wind = pd.Series([0.5, 1, 2.5], index=ix, name='wind')
 
         exp_results = pd.Series([48.0506544, 48.3709869, 46.6442104], index=ix)
 
@@ -75,6 +86,12 @@ class TestBackOfModuleTemp:
                 calcparams.back_of_module_temp(poa, temp_amb, wind), exp_results
             )
             is None
+        )
+        captured = capsys.readouterr()
+        assert captured.out.rstrip('\n') == (
+            'Calculating and adding "bom_temp" column as '
+            'poa * e^(-3.56 + -0.075 * wind) + temp_amb. '
+            'Coefficients a and b assume "glass_cell_poly" modules and "open_rack" racking.'
         )
 
     @pytest.mark.parametrize(

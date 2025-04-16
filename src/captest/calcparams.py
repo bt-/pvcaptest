@@ -96,6 +96,15 @@ def back_of_module_temp(
     """
     a = EMP_HEAT_COEFF[racking][module_type]["a"]
     b = EMP_HEAT_COEFF[racking][module_type]["b"]
+    if verbose:
+        poa_id = poa.name if hasattr(poa, "name") else str(poa)
+        temp_amb_id = temp_amb.name if hasattr(temp_amb, "name") else str(temp_amb)
+        wind_speed_id = wind_speed.name if hasattr(wind_speed, "name") else str(wind_speed)
+        print(
+            'Calculating and adding "bom_temp" column as '
+            f'{poa_id} * e^({a} + {b} * {wind_speed_id}) + {temp_amb_id}. '
+            f'Coefficients a and b assume "{module_type}" modules and "{racking}" racking.'
+        )
     return poa * np.exp(a + b * wind_speed) + temp_amb
 
 
