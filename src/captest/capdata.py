@@ -9,10 +9,7 @@ objects as arguments and provide a summary of the data filtering steps and
 the results of the capacity test, respectively.
 """
 # standard library imports
-import os
-from pathlib import Path
 import re
-import datetime
 import copy
 from functools import wraps
 from itertools import combinations
@@ -21,26 +18,18 @@ import pytz
 import importlib
 
 # anaconda distribution defaults
-import dateutil
 import numpy as np
 import pandas as pd
 
 # anaconda distribution defaults
 # statistics and machine learning imports
 import statsmodels.formula.api as smf
-from scipy import stats
 # from sklearn.covariance import EllipticEnvelope
 import sklearn.covariance as sk_cv
 
 # anaconda distribution defaults
 # visualization library imports
-import matplotlib.pyplot as plt
-import colorcet as cc
-from bokeh.io import show
-from bokeh.plotting import figure
-from bokeh.palettes import Category10
-from bokeh.layouts import gridplot
-from bokeh.models import Legend, HoverTool, ColumnDataSource, NumeralTickFormatter
+from bokeh.models import HoverTool, NumeralTickFormatter
 
 import param
 
@@ -2687,10 +2676,10 @@ class CapData(object):
             meas_ghi = self.data_filtered[ghi_col]
 
         clear_per = detect_clearsky(
-            meas_ghi,
-            self.data_filtered['ghi_mod_csky'],
-            meas_ghi.index,
-            window_length,
+            measured=meas_ghi,
+            clearsky=self.data_filtered['ghi_mod_csky'],
+            times=meas_ghi.index,
+            window_length=window_length,
             **kwargs,
         )
         if not any(clear_per):
