@@ -2850,10 +2850,10 @@ class CapData(object):
             meas_ghi = self.data_filtered[ghi_col]
 
         clear_per = detect_clearsky(
-            meas_ghi,
-            self.data_filtered['ghi_mod_csky'],
-            meas_ghi.index,
-            window_length,
+            measured=meas_ghi,
+            clearsky=self.data_filtered['ghi_mod_csky'],
+            times=meas_ghi.index,
+            window_length=window_length,
             **kwargs,
         )
         if not any(clear_per):
