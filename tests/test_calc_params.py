@@ -239,24 +239,16 @@ class TestPVsystRearIrradiance:
 
 class TestEtotal:
     def test_numeric_inputs(self):
-        poa = 100
-        rear = 10
-        assert calcparams.e_total(poa, rear) == 107
+        assert calcparams.e_total(poa=100, rpoa=10) == 107
     
     def test_numeric_non_default_bifaciality(self):
-        poa = 100
-        rear = 10
-        assert calcparams.e_total(poa, rear, bifaciality=0.5) == 105
+        assert calcparams.e_total(poa=100, rpoa=10, bifaciality=0.5) == 105
 
     def test_numeric_non_default_bifi_frac(self):
-        poa = 100
-        rear = 10
-        assert calcparams.e_total(poa, rear, bifaciality=1, bifacial_frac=0.5) == 105
+        assert calcparams.e_total(poa=100, rpoa=10, bifaciality=1, bifacial_frac=0.5) == 105
 
     def test_numeric_non_default_bifaciality_and_bifacial_frac(self):
-        poa = 100
-        rear = 20
-        assert calcparams.e_total(poa, rear, bifaciality=0.5, bifacial_frac=0.5) == 105
+        assert calcparams.e_total(poa=100, rpoa=20, bifaciality=0.5, bifacial_frac=0.5) == 105
 
     def test_series_inputs(self):
         ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
@@ -266,6 +258,9 @@ class TestEtotal:
         exp_results = pd.Series([170, 215, 260], index=ix)
 
         pd.testing.assert_series_equal(
-            calcparams.e_total(poa, rear), exp_results,
+            calcparams.e_total(poa=poa, rpoa=rear), exp_results,
             check_dtype=False
         )
+
+    def test_rear_shade(self):
+        assert calcparams.e_total(poa=100, rpoa=20, rear_shade=0.5) == 107

@@ -4,6 +4,7 @@ Functions to calculate derived values from measured data.
 For example, back-of-module temperature from poa, wind speed, and ambient temp with the
 Sandia module temperature model.
 """
+
 import numpy as np
 import pandas as pd
 
@@ -198,6 +199,7 @@ def avg_typ_cell_temp(poa, cell_temp, verbose=True):
     """
     return (poa * cell_temp).sum() / poa.sum()
 
+
 def pvsyst_rear_irradiance(globbak, backshd, verbose=True):
     """Calculate the sum of PVsyst's global rear irradiance and rear shading and IAM losses.
 
@@ -215,10 +217,11 @@ def pvsyst_rear_irradiance(globbak, backshd, verbose=True):
     """
     return globbak + backshd
 
-def e_total(poa, rpoa, bifaciality=0.7, bifacial_frac=1, verbose=True):
+
+def e_total(**kwargs):
     """
     Calculate total irradiance from POA and rear irradiance.
-    
+
     Parameters
     ----------
     poa : numeric or Series
@@ -231,10 +234,28 @@ def e_total(poa, rpoa, bifaciality=0.7, bifacial_frac=1, verbose=True):
         Fraction of total array nameplate power that is bifacial. Pass to calculate
         total plane of array irradiance for plants with a mix of monofacial and
         bifacial modules.
+    rear_shade : numeric, default 0
+        Fraction of rear irradiance that is lost due to shading. Set to decimal
+        fraction, e.g. 0.12, to include in calculation of `e_total`.
 
     Returns
     -------
     numeric or Series
         Total plane of array irradiance.
     """
-    return poa + rpoa * bifaciality * bifacial_frac
+    kwargs.setdefault("bifaciality", 0.7)
+    kwargs.setdefault("bifacial_frac", 1)
+    kwargs.setdefault("rear_shade", 0)
+    if kwargs.get("verbose", True):
+        param_ids = get_param_ids(kwargs)
+        print('Calculating and adding "e_total" column as '
+              f'{param_ids["poa"]} + {param_ids["rpoa"]} * '
+              f'{param_ids["bifaciality"]} * {param_ids["bifacial_frac"]} * '
+              f'(1 - {param_ids["rear_shade"]})')
+    return (
+        kwargs["poa"] +
+        kwargs["rpoa"] *
+        kwargs["bifaciality"] *
+        kwargs["bifacial_frac"] *
+        (1 - kwargs["rear_shade"])
+    )

@@ -3538,7 +3538,7 @@ class CapData(object):
             verbose=verbose
         )
     
-    def e_total(self, poa, rpoa, bifaciality=None, bifacial_frac=None, verbose=True):
+    def e_total(self, poa, rpoa, bifaciality=None, bifacial_frac=None, rear_shade=None, verbose=True):
         """
         Calculate total irradiance from POA and rear irradiance.
         
@@ -3558,6 +3558,10 @@ class CapData(object):
         bifacial_frac : numeric, default None
             Fraction of total array nameplate power that is bifacial. If None, uses value
             from CapData.bifacial_frac if available, otherwise defaults to 1.
+        rear_shade : numeric, default None
+            Fraction of rear irradiance that is lost due to shading. Set to decimal
+            fraction, e.g. 0.12, to include in calculation of `e_total`. If None, uses
+            value from CapData.rear_shade if available, otherwise defaults to 0.
         verbose : bool, default True
             Set to False to not print calculation explanation.
         
@@ -3572,12 +3576,16 @@ class CapData(object):
             
         if bifacial_frac is None:
             bifacial_frac = getattr(self, 'bifacial_frac', 1)
-        
+
+        if rear_shade is None:
+            rear_shade = getattr(self, 'rear_shade', 0)
+
         self.data['e_total'] = calcparams.e_total(
             poa=self.data[poa],
             rpoa=self.data[rpoa],
             bifaciality=bifaciality,
             bifacial_frac=bifacial_frac,
+            rear_shade=rear_shade,
             verbose=verbose
         )
 
