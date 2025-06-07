@@ -66,12 +66,15 @@ def temp_correct_power(**kwargs):
     type matches `power`
         Power corrected for temperature.
     """
-    kwargs.setdefault('base_temp', 25)
-    corr_power = (
-        kwargs['power'] /
-        (1 + ((kwargs['power_temp_coeff'] / 100) * (kwargs['cell_temp'] - kwargs['base_temp'])))
+    kwargs.setdefault("base_temp", 25)
+    corr_power = kwargs["power"] / (
+        1
+        + (
+            (kwargs["power_temp_coeff"] / 100)
+            * (kwargs["cell_temp"] - kwargs["base_temp"])
+        )
     )
-    if kwargs.get('verbose', True):
+    if kwargs.get("verbose", True):
         param_ids = get_param_ids(kwargs)
         print(
             'Calculating and adding "temp_correct_power" column as '
@@ -109,10 +112,10 @@ def back_of_module_temp(**kwargs):
     numeric or Series
         Back of module temperatures.
     """
-    kwargs.setdefault('racking', 'open_rack')
-    kwargs.setdefault('module_type', 'glass_cell_poly')
-    a = EMP_HEAT_COEFF[kwargs['racking']][kwargs['module_type']]["a"]
-    b = EMP_HEAT_COEFF[kwargs['racking']][kwargs['module_type']]["b"]
+    kwargs.setdefault("racking", "open_rack")
+    kwargs.setdefault("module_type", "glass_cell_poly")
+    a = EMP_HEAT_COEFF[kwargs["racking"]][kwargs["module_type"]]["a"]
+    b = EMP_HEAT_COEFF[kwargs["racking"]][kwargs["module_type"]]["b"]
     # if kwargs.get('verbose', True):
     #     param_ids = get_param_ids(kwargs)
     #     print(
@@ -120,10 +123,12 @@ def back_of_module_temp(**kwargs):
     #         f'{param_ids["poa"]} * e^({a} + {b} * {param_ids["wind_speed"]}) + {param_ids["temp_amb"]}. '
     #         f'Coefficients a and b assume "{kwargs['module_type']}" modules and "{kwargs['racking']}" racking.'
     #     )
-    return kwargs['poa'] * np.exp(a + b * kwargs['wind_speed']) + kwargs['temp_amb']
+    return kwargs["poa"] * np.exp(a + b * kwargs["wind_speed"]) + kwargs["temp_amb"]
 
 
-def cell_temp(data, bom, poa, module_type="glass_cell_poly", racking="open_rack", verbose=True):
+def cell_temp(
+    data, bom, poa, module_type="glass_cell_poly", racking="open_rack", verbose=True
+):
     """Calculate cell temp from BOM temp, POA, and heat transfer coefficient.
 
     Equation from NREL Weather Corrected Performance Ratio Report.
@@ -164,7 +169,9 @@ def cell_temp(data, bom, poa, module_type="glass_cell_poly", racking="open_rack"
         )
     bom_data = data[bom]
     poa_data = data[poa]
-    return bom_data + (poa_data / 1000) * EMP_HEAT_COEFF[racking][module_type]["del_tcnd"]
+    return (
+        bom_data + (poa_data / 1000) * EMP_HEAT_COEFF[racking][module_type]["del_tcnd"]
+    )
 
 
 def avg_typ_cell_temp(poa, cell_temp, verbose=True):
@@ -233,14 +240,12 @@ def e_total(**kwargs):
     kwargs.setdefault("rear_shade", 0)
     if kwargs.get("verbose", True):
         param_ids = get_param_ids(kwargs)
-        print('Calculating and adding "e_total" column as '
-              f'{param_ids["poa"]} + {param_ids["rpoa"]} * '
-              f'{param_ids["bifaciality"]} * {param_ids["bifacial_frac"]} * '
-              f'(1 - {param_ids["rear_shade"]})')
-    return (
-        kwargs["poa"] +
-        kwargs["rpoa"] *
-        kwargs["bifaciality"] *
-        kwargs["bifacial_frac"] *
-        (1 - kwargs["rear_shade"])
-    )
+        print(
+            'Calculating and adding "e_total" column as '
+            f'{param_ids["poa"]} + {param_ids["rpoa"]} * '
+            f'{param_ids["bifaciality"]} * {param_ids["bifacial_frac"]} * '
+            f'(1 - {param_ids["rear_shade"]})'
+        )
+    return kwargs["poa"] + kwargs["rpoa"] * kwargs["bifaciality"] * kwargs[
+        "bifacial_frac"
+    ] * (1 - kwargs["rear_shade"])
