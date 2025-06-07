@@ -3,6 +3,7 @@ import pandas as pd
 
 from captest import calcparams
 
+
 class TestTempCorrectPower:
     """Test correction of power by temperature coefficient."""
 
@@ -13,16 +14,18 @@ class TestTempCorrectPower:
         captured = capsys.readouterr()
         assert captured.out.rstrip("\n") == (
             'Calculating and adding "temp_correct_power" column as '
-            '(10) / (1 + ((-0.37 / 100) * (50 - 25)))'
+            "(10) / (1 + ((-0.37 / 100) * (50 - 25)))"
         )
 
     def test_output_type_series(self, capsys):
-        power_tc = calcparams.temp_correct_power(pd.Series([10, 12, 15], name='power_col'), -0.37, 50)
+        power_tc = calcparams.temp_correct_power(
+            pd.Series([10, 12, 15], name="power_col"), -0.37, 50
+        )
         assert isinstance(power_tc, pd.Series)
         captured = capsys.readouterr()
         assert captured.out.rstrip("\n") == (
             'Calculating and adding "temp_correct_power" column as '
-            '(power_col) / (1 + ((-0.37 / 100) * (50 - 25)))'
+            "(power_col) / (1 + ((-0.37 / 100) * (50 - 25)))"
         )
 
     def test_high_temp_higher_power(self, capsys):
@@ -30,7 +33,7 @@ class TestTempCorrectPower:
         corr_power = calcparams.temp_correct_power(power, -0.37, 50, verbose=False)
         assert corr_power > power
         captured = capsys.readouterr()
-        assert captured.out == ''
+        assert captured.out == ""
 
     def test_low_temp_lower_power(self):
         power = 10
@@ -62,22 +65,24 @@ class TestBackOfModuleTemp:
     def test_float_inputs(self, capsys):
         assert calcparams.back_of_module_temp(800, 30, 3) == pytest.approx(48.1671)
         captured = capsys.readouterr()
-        assert captured.out.rstrip('\n') == (
+        assert captured.out.rstrip("\n") == (
             'Calculating and adding "bom_temp" column as '
-            '800 * e^(-3.56 + -0.075 * 3) + 30. '
+            "800 * e^(-3.56 + -0.075 * 3) + 30. "
             'Coefficients a and b assume "glass_cell_poly" modules and "open_rack" racking.'
         )
 
     def test_float_inputs_no_output(self, capsys):
-        assert calcparams.back_of_module_temp(800, 30, 3, verbose=False) == pytest.approx(48.1671)
+        assert calcparams.back_of_module_temp(
+            800, 30, 3, verbose=False
+        ) == pytest.approx(48.1671)
         captured = capsys.readouterr()
-        assert captured.out == ''
+        assert captured.out == ""
 
     def test_series_inputs(self, capsys):
         ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
-        poa = pd.Series([805, 810, 812], index=ix, name='poa')
-        temp_amb = pd.Series([26, 27, 27.5], index=ix, name='temp_amb')
-        wind = pd.Series([0.5, 1, 2.5], index=ix, name='wind')
+        poa = pd.Series([805, 810, 812], index=ix, name="poa")
+        temp_amb = pd.Series([26, 27, 27.5], index=ix, name="temp_amb")
+        wind = pd.Series([0.5, 1, 2.5], index=ix, name="wind")
 
         exp_results = pd.Series([48.0506544, 48.3709869, 46.6442104], index=ix)
 
@@ -88,9 +93,9 @@ class TestBackOfModuleTemp:
             is None
         )
         captured = capsys.readouterr()
-        assert captured.out.rstrip('\n') == (
+        assert captured.out.rstrip("\n") == (
             'Calculating and adding "bom_temp" column as '
-            'poa * e^(-3.56 + -0.075 * wind) + temp_amb. '
+            "poa * e^(-3.56 + -0.075 * wind) + temp_amb. "
             'Coefficients a and b assume "glass_cell_poly" modules and "open_rack" racking.'
         )
 
@@ -112,106 +117,61 @@ class TestBackOfModuleTemp:
 
 
 class TestCellTemp:
-    def test_float_inputs(self, capsys):
-        cell_temp = calcparams.cell_temp(30, 850, verbose=False)
-        captured = capsys.readouterr()
-        assert cell_temp == pytest.approx(32.55)
-        assert captured.out == ''
-
     def test_series_inputs(self):
         ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
         poa = pd.Series([805, 810, 812], index=ix)
         temp_bom = pd.Series([26, 27, 27.5], index=ix)
+        df = pd.DataFrame({"poa": poa, "bom_temp": temp_bom}, index=ix)
 
         exp_results = pd.Series([28.415, 29.43, 29.936], index=ix)
 
-        assert (
-            pd.testing.assert_series_equal(calcparams.cell_temp(temp_bom, poa), exp_results)
-            is None
+        pd.testing.assert_series_equal(
+            calcparams.cell_temp(df, "bom_temp", "poa"), exp_results
         )
 
     @pytest.mark.parametrize(
         "racking, module_type, expected",
         [
-            ("open_rack", "glass_cell_glass", 30.4),
-            ("open_rack", "glass_cell_poly", 30.4),
-            ("open_rack", "poly_tf_steel", 30.4),
-            ("close_roof_mount", "glass_cell_glass", 28.8),
-            ("insulated_back", "glass_cell_poly", 28),
+            ("open_rack", "glass_cell_glass", pd.Series([28.415, 29.43, 29.936])),
+            ("close_roof_mount", "glass_cell_glass", pd.Series([26.805, 27.81, 28.312])),
+            ("insulated_back", "glass_cell_poly", pd.Series([26, 27, 27.5])),
         ],
     )
     def test_emp_heat_coeffs(self, racking, module_type, expected):
-        bom = calcparams.cell_temp(28, 800, module_type=module_type, racking=racking)
-        assert bom == pytest.approx(expected)
+        # ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
+        poa = pd.Series([805, 810, 812])
+        temp_bom = pd.Series([26, 27, 27.5])
+        df = pd.DataFrame({"poa": poa, "bom_temp": temp_bom})
+        ctemp = calcparams.cell_temp(
+            df,
+            "bom_temp",
+            "poa",
+            module_type=module_type,
+            racking=racking,
+            verbose=False,
+        )
+        pd.testing.assert_series_equal(ctemp, expected, check_names=False)
 
     def test_output_message_series_inputs(self, capsys):
         ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
-        poa = pd.Series([805, 810, 812], index=ix, name='poa')
-        temp_bom = pd.Series([26, 27, 27.5], index=ix, name='bom_temp')
-        calcparams.cell_temp(temp_bom, poa)
-        
+        poa = pd.Series([805, 810, 812], index=ix, name="poa")
+        temp_bom = pd.Series([26, 27, 27.5], index=ix, name="bom_temp")
+        df = pd.DataFrame({"poa": poa, "bom_temp": temp_bom}, index=ix)
+
+        calcparams.cell_temp(df, "bom_temp", "poa")
+
         # Get captured stdout
         captured = capsys.readouterr()
         stdout_content = captured.out
-        
+
         print(stdout_content)
-        assert stdout_content.rstrip('\n') == (
+        assert stdout_content.rstrip("\n") == (
             'Calculating and adding "cell_temp" column using the Sandia temperature '
             'model assuming "glass_cell_poly" module type and "open_rack" racking '
             'from the "bom_temp" and "poa" columns.'
         )
 
-    def test_output_message_float_inputs(self, capsys):
-        poa = 805
-        temp_bom = 26
-        calcparams.cell_temp(temp_bom, poa)
-        
-        # Get captured stdout
-        captured = capsys.readouterr()
-        stdout_content = captured.out
-        
-        print(stdout_content)
-        assert stdout_content.rstrip('\n') == (
-            'Calculating and adding "cell_temp" column using the Sandia temperature '
-            'model assuming "glass_cell_poly" module type and "open_rack" racking '
-            'from the bom and poa values provided.'
-        )
-    
-    def test_output_message_bom_series_poa_numeric(self, capsys):
-        ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
-        temp_bom = pd.Series([26, 27, 27.5], index=ix, name='bom_temp')
-        poa = 805
-        calcparams.cell_temp(temp_bom, poa)
-        
-        # Get captured stdout
-        captured = capsys.readouterr()
-        stdout_content = captured.out
-        
-        print(stdout_content)
-        assert stdout_content.rstrip('\n') == (
-            'Calculating and adding "cell_temp" column using the Sandia temperature '
-            'model assuming "glass_cell_poly" module type and "open_rack" racking '
-            'from the "bom_temp" column and poa value provided.'
-        )
 
-    def test_output_message_bom_numeric_poa_series(self, capsys):
-        ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
-        poa = pd.Series([805, 810, 812], index=ix, name='poa')
-        temp_bom = 26
-        calcparams.cell_temp(temp_bom, poa)
-        
-        # Get captured stdout
-        captured = capsys.readouterr()
-        stdout_content = captured.out
-        
-        print(stdout_content)
-        assert stdout_content.rstrip('\n') == (
-            'Calculating and adding "cell_temp" column using the Sandia temperature '
-            'model assuming "glass_cell_poly" module type and "open_rack" racking '
-            'from the bom value provided and "poa" column.'
-        )
-        
-        
 class TestAvgTypCellTemp:
     def test_math(self):
         ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
@@ -240,15 +200,21 @@ class TestPVsystRearIrradiance:
 class TestEtotal:
     def test_numeric_inputs(self):
         assert calcparams.e_total(poa=100, rpoa=10) == 107
-    
+
     def test_numeric_non_default_bifaciality(self):
         assert calcparams.e_total(poa=100, rpoa=10, bifaciality=0.5) == 105
 
     def test_numeric_non_default_bifi_frac(self):
-        assert calcparams.e_total(poa=100, rpoa=10, bifaciality=1, bifacial_frac=0.5) == 105
+        assert (
+            calcparams.e_total(poa=100, rpoa=10, bifaciality=1, bifacial_frac=0.5)
+            == 105
+        )
 
     def test_numeric_non_default_bifaciality_and_bifacial_frac(self):
-        assert calcparams.e_total(poa=100, rpoa=20, bifaciality=0.5, bifacial_frac=0.5) == 105
+        assert (
+            calcparams.e_total(poa=100, rpoa=20, bifaciality=0.5, bifacial_frac=0.5)
+            == 105
+        )
 
     def test_series_inputs(self):
         ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
@@ -258,8 +224,7 @@ class TestEtotal:
         exp_results = pd.Series([170, 215, 260], index=ix)
 
         pd.testing.assert_series_equal(
-            calcparams.e_total(poa=poa, rpoa=rear), exp_results,
-            check_dtype=False
+            calcparams.e_total(poa=poa, rpoa=rear), exp_results, check_dtype=False
         )
 
     def test_rear_shade(self):

@@ -3476,45 +3476,6 @@ class CapData(object):
             verbose=verbose
         )
         
-    def cell_temp(self, bom, poa, module_type=None, racking=None, verbose=True):
-        """
-        Calculate cell temperature from back-of-module temperature and POA irradiance.
-
-        Parameters
-        ----------
-        bom : str
-            The column name of the data attribute with the back-of-module temperature.
-        poa : str
-            The column name of the data attribute with the POA irradiance.
-        module_type : str, default None
-            By default uses value from CapData.module_type
-        racking : str, default None
-            By default uses value from CapData.racking
-        verbose : bool, default True
-            Set to False to not print calculation explanation.
-
-        Returns
-        -------
-        None
-            Adds column labeled 'cell_temp' to CapData.data attribute.
-        """
-        if module_type is not None:
-            module_type = module_type
-        else:
-            module_type = self.module_type
-        if racking is not None:
-            racking = racking
-        else:
-            racking = self.racking
-
-        self.data['cell_temp'] = calcparams.cell_temp(
-            bom=self.data[bom],
-            poa=self.data[poa],
-            module_type=module_type,
-            racking=racking,
-            verbose=verbose
-        )
-    
     def rpoa_pvsyst(self, globbak, backshd, verbose=True):
         """Calculate the sum of PVsyst's global rear irradiance and rear shading and IAM losses.
 
@@ -3588,6 +3549,14 @@ class CapData(object):
             rear_shade=rear_shade,
             verbose=verbose
         )
+
+
+    def custom_param(self, func, *args, **kwargs):
+        """Applies the function `func` with kwargs and adds result as new column to `data`.
+        """
+        result = func.__name__
+        self.data[result] = func(self.data, *args, **kwargs)
+
 
 if __name__ == "__main__":
     import doctest

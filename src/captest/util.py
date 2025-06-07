@@ -389,7 +389,7 @@ def process_reg_cols(
                 # calcparams module
                 # args or kwargs that are not Series of Data should be attributes of the
                 # CapData instance
-                func(cd, **updated_params, verbose=verbose)
+                cd.custom_param(func, **updated_params, verbose=verbose)
                 # Update the original calc_params dictionary at the current path
                 update_by_path(original_calc_params, dict_path, func.__name__)
                 # Recursive call to reprocess again with the modified reg_cols dict

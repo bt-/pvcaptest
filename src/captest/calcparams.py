@@ -6,7 +6,6 @@ Sandia module temperature model.
 """
 
 import numpy as np
-import pandas as pd
 
 EMP_HEAT_COEFF = {
     "open_rack": {
@@ -114,33 +113,36 @@ def back_of_module_temp(**kwargs):
     kwargs.setdefault('module_type', 'glass_cell_poly')
     a = EMP_HEAT_COEFF[kwargs['racking']][kwargs['module_type']]["a"]
     b = EMP_HEAT_COEFF[kwargs['racking']][kwargs['module_type']]["b"]
-    if kwargs.get('verbose', True):
-        param_ids = get_param_ids(kwargs)
-        print(
-            'Calculating and adding "bom_temp" column as '
-            f'{param_ids["poa"]} * e^({a} + {b} * {param_ids["wind_speed"]}) + {param_ids["temp_amb"]}. '
-            f'Coefficients a and b assume "{kwargs['module_type']}" modules and "{kwargs['racking']}" racking.'
-        )
+    # if kwargs.get('verbose', True):
+    #     param_ids = get_param_ids(kwargs)
+    #     print(
+    #         'Calculating and adding "bom_temp" column as '
+    #         f'{param_ids["poa"]} * e^({a} + {b} * {param_ids["wind_speed"]}) + {param_ids["temp_amb"]}. '
+    #         f'Coefficients a and b assume "{kwargs['module_type']}" modules and "{kwargs['racking']}" racking.'
+    #     )
     return kwargs['poa'] * np.exp(a + b * kwargs['wind_speed']) + kwargs['temp_amb']
 
 
-def cell_temp(bom, poa, module_type="glass_cell_poly", racking="open_rack", verbose=True):
+def cell_temp(data, bom, poa, module_type="glass_cell_poly", racking="open_rack", verbose=True):
     """Calculate cell temp from BOM temp, POA, and heat transfer coefficient.
 
     Equation from NREL Weather Corrected Performance Ratio Report.
 
     Parameters
     ----------
-    bom : numeric or Series
-        Back of module temperature (degrees C). Strictly following the NREL
+    data : DataFrame
+        DataFrame with the source data for calculations. Usually the `data` attribute
+        of a CapData instance.
+    bom : str
+        Column name for back of module temperature (degrees C). Strictly following the NREL
         procedure this value would be obtained from the `back_of_module_temp`
         function.
 
         Alternatively, a measured BOM temperature may be used.
 
         Refer to p.7 of NREL Weather Corrected Performance Ratio Report.
-    poa : numeric or Series
-        POA irradiance in W/m^2.
+    poa : str
+        Column name for POA irradiance in W/m^2.
     module_type : str, default 'glass_cell_poly'
         Any of glass_cell_poly, glass_cell_glass, or 'poly_tf_steel'.
     racking: str, default 'open_rack'
@@ -151,35 +153,18 @@ def cell_temp(bom, poa, module_type="glass_cell_poly", racking="open_rack", verb
 
     Returns
     -------
-    numeric or Series
-        Cell temperature(s).
+    Series
+        Cell temperatures.
     """
     if verbose:
-        if isinstance(bom, pd.Series) and isinstance(poa, pd.Series):
-            print(
-                'Calculating and adding "cell_temp" column using the Sandia temperature '
-                f'model assuming "{module_type}" module type and "{racking}" racking '
-                f'from the "{bom.name}" and "{poa.name}" columns.'
-            )
-        elif isinstance(bom, pd.Series):
-            print(
-                'Calculating and adding "cell_temp" column using the Sandia temperature '
-                f'model assuming "{module_type}" module type and "{racking}" racking '
-                f'from the "{bom.name}" column and poa value provided.'
-            )
-        elif isinstance(poa, pd.Series):
-            print(
-                'Calculating and adding "cell_temp" column using the Sandia temperature '
-                f'model assuming "{module_type}" module type and "{racking}" racking '
-                f'from the bom value provided and "{poa.name}" column.'
-            )
-        else:
-            print(
-                'Calculating and adding "cell_temp" column using the Sandia temperature '
-                f'model assuming "{module_type}" module type and "{racking}" racking '
-                'from the bom and poa values provided.'
-            )
-    return bom + (poa / 1000) * EMP_HEAT_COEFF[racking][module_type]["del_tcnd"]
+        print(
+            'Calculating and adding "cell_temp" column using the Sandia temperature '
+            f'model assuming "{module_type}" module type and "{racking}" racking '
+            f'from the "{bom}" and "{poa}" columns.'
+        )
+    bom_data = data[bom]
+    poa_data = data[poa]
+    return bom_data + (poa_data / 1000) * EMP_HEAT_COEFF[racking][module_type]["del_tcnd"]
 
 
 def avg_typ_cell_temp(poa, cell_temp, verbose=True):

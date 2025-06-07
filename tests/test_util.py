@@ -129,6 +129,10 @@ def nested_calc_dict():
             col_name = group_id + '_' + agg_func
             self.data[col_name] = np.full(10, 5)
             return col_name
+
+        def custom_param(self, func, *args, **kwargs):
+            setattr(self, f'{func.__name__}_custom_kwargs', kwargs.copy()) 
+            func(self, **kwargs)
     
     dummy_cd = DummyCapData()
     dummy_cd.column_groups = {
@@ -227,12 +231,13 @@ class TestProcessRegCols():
         ])
         assert dummy_cd.data.columns.equals(expected_columns)
         assert dummy_cd.test_func1_kwargs == {
-            'power':'metered_power_kw', 'cell_temp': 'test_func2'}
-        assert dummy_cd.test_func2_kwargs == {'poa': 'irr_poa_mean', 'bom': 'test_func3'}
+            'power':'metered_power_kw', 'cell_temp': 'test_func2', 'verbose': True}
+        assert dummy_cd.test_func2_kwargs == {'poa': 'irr_poa_mean', 'bom': 'test_func3', 'verbose': True}
         assert dummy_cd.test_func3_kwargs == {
             'poa':'irr_poa_mean',
             'temp_amb':'temp_amb_mean',
-            'wind_speed':'wind_speed_mean'
+            'wind_speed':'wind_speed_mean',
+            'verbose': True
         }
         # check that reg_cols is rolled up all the way correctly
         for k, v in expected_modified_reg_cols.items():
