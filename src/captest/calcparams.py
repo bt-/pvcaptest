@@ -40,7 +40,9 @@ def get_param_ids(params):
     }
 
 
-def temp_correct_power(**kwargs):
+def power_temp_correct(
+    data, power, cell_temp, power_temp_coeff=None, base_temp=25, verbose=True
+):
     """Apply temperature correction to PV power.
 
     Divides `power` by the temperature correction, so low power values that
@@ -49,40 +51,35 @@ def temp_correct_power(**kwargs):
 
     Parameters
     ----------
-    power : numeric or Series
-        PV power (in watts) to correct to the `base_temp`.
+    data : DataFrame
+        DataFrame with the source data for calculations. Usually the `data` attribute
+        of a CapData instance.
+    power : str
+        The column name of the data attribute with the power to correct.
+    cell_temp : str
+        Name of the column in `data` containing the cell temperature (in Celsius) used
+        to calculate temperature differential from the `base_temp`.
     power_temp_coeff : numeric
         Module power temperature coefficient as percent per degree celsius.
         Ex. -0.36
-    cell_temp : numeric or Series
-        Cell temperature (in Celsius) used to calculate temperature
-        differential from the `base_temp`.
     base_temp : numeric, default 25
         Base temperature (in Celsius) to correct power to. Default is the
         STC of 25 degrees Celsius.
 
     Returns
     -------
-    type matches `power`
+    Series
         Power corrected for temperature.
     """
-    kwargs.setdefault("base_temp", 25)
-    corr_power = kwargs["power"] / (
-        1
-        + (
-            (kwargs["power_temp_coeff"] / 100)
-            * (kwargs["cell_temp"] - kwargs["base_temp"])
-        )
-    )
-    if kwargs.get("verbose", True):
-        param_ids = get_param_ids(kwargs)
+    if verbose:
         print(
             'Calculating and adding "temp_correct_power" column as '
-            f'({param_ids["power"]}) / (1 + (({param_ids["power_temp_coeff"]} / 100) * '
-            f'({param_ids["cell_temp"]} - {param_ids["base_temp"]})))'
+            f'({power}) / (1 + (({power_temp_coeff} / 100) * '
+            f'({cell_temp} - {base_temp})))'
         )
-    return corr_power
-
+    power = data[power]
+    cell_temp = data[cell_temp]
+    return power / (1 + ((power_temp_coeff / 100) * (cell_temp - base_temp)))
 
 def back_of_module_temp(**kwargs):
     """Calculate back of module temperature from measured weather data.

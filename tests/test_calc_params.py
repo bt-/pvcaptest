@@ -7,56 +7,57 @@ from captest import calcparams
 class TestTempCorrectPower:
     """Test correction of power by temperature coefficient."""
 
-    def test_output_type_numeric(self, capsys):
-        """Check output type matches input type and check explanation output"""
-        power_tc = calcparams.temp_correct_power(10, -0.37, 50)
-        assert isinstance(power_tc, float)
-        captured = capsys.readouterr()
-        assert captured.out.rstrip("\n") == (
-            'Calculating and adding "temp_correct_power" column as '
-            "(10) / (1 + ((-0.37 / 100) * (50 - 25)))"
-        )
-
     def test_output_type_series(self, capsys):
-        power_tc = calcparams.temp_correct_power(
-            pd.Series([10, 12, 15], name="power_col"), -0.37, 50
+        df = pd.DataFrame({"power_col": [10, 12, 15], "cell_temp_col": [50, 50, 50]})
+        power_tc = calcparams.power_temp_correct(
+            df, "power_col", "cell_temp_col", power_temp_coeff=-0.37
         )
         assert isinstance(power_tc, pd.Series)
         captured = capsys.readouterr()
         assert captured.out.rstrip("\n") == (
             'Calculating and adding "temp_correct_power" column as '
-            "(power_col) / (1 + ((-0.37 / 100) * (50 - 25)))"
+            "(power_col) / (1 + ((-0.37 / 100) * (cell_temp_col - 25)))"
         )
 
     def test_high_temp_higher_power(self, capsys):
-        power = 10
-        corr_power = calcparams.temp_correct_power(power, -0.37, 50, verbose=False)
-        assert corr_power > power
+        df = pd.DataFrame({"power_col": [10], "cell_temp_col": [50]})
+        corr_power = calcparams.power_temp_correct(
+            df, "power_col", "cell_temp_col", power_temp_coeff=-0.37, verbose=False
+        )
+        assert corr_power.iloc[0] > df["power_col"].iloc[0]
         captured = capsys.readouterr()
         assert captured.out == ""
 
     def test_low_temp_lower_power(self):
-        power = 10
-        corr_power = calcparams.temp_correct_power(power, -0.37, 10)
-        assert corr_power < power
-
-    def test_math_numeric_power(self):
-        power = 10
-        corr_power = calcparams.temp_correct_power(power, -0.37, 50)
-        assert pytest.approx(corr_power, 0.3) == 11.019
+        df = pd.DataFrame({"power_col": [10], "cell_temp_col": [10]})
+        corr_power = calcparams.power_temp_correct(
+            df, "power_col", "cell_temp_col", power_temp_coeff=-0.37
+        )
+        assert corr_power.iloc[0] < df["power_col"].iloc[0]
 
     def test_math_series_power(self):
         ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
-        power = pd.Series([10, 20, 15], index=ix)
-        corr_power = calcparams.temp_correct_power(power, -0.37, 50)
+        df = pd.DataFrame(
+            {"power_col": [10, 20, 15], "cell_temp_col": [50, 50, 50]}, index=ix
+        )
+        corr_power = calcparams.power_temp_correct(
+            df, "power_col", "cell_temp_col", power_temp_coeff=-0.37
+        )
         assert pytest.approx(corr_power.values, 0.3) == [11.019, 22.038, 16.528]
 
     def test_no_temp_diff(self):
-        assert calcparams.temp_correct_power(10, -0.37, 25) == 10
+        df = pd.DataFrame({"power_col": [10], "cell_temp_col": [25]})
+        corrected_power = calcparams.power_temp_correct(
+            df, "power_col", "cell_temp_col", power_temp_coeff=-0.37
+        )
+        assert corrected_power.iloc[0] == 10
 
     def test_user_base_temp(self):
-        corr_power = calcparams.temp_correct_power(10, -0.37, 30, base_temp=27.5)
-        assert pytest.approx(corr_power, 0.3) == 10.093
+        df = pd.DataFrame({"power_col": [10], "cell_temp_col": [30]})
+        corr_power = calcparams.power_temp_correct(
+            df, "power_col", "cell_temp_col", power_temp_coeff=-0.37, base_temp=27.5
+        )
+        assert pytest.approx(corr_power.iloc[0], 0.3) == 10.093
 
 
 class TestBackOfModuleTemp:

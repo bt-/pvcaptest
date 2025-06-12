@@ -16,6 +16,7 @@ from itertools import combinations
 import warnings
 import pytz
 import importlib
+import inspect
 
 # anaconda distribution defaults
 import numpy as np
@@ -3435,47 +3436,6 @@ class CapData(object):
             verbose=verbose
         )
     
-    def power_tc(self, power, cell_temp, power_temp_coeff=None, base_temp=None, verbose=True):
-        """
-        Calculate temperature corrected power from cell temperature.
-
-        Parameters
-        ----------
-        power : str
-            The column name of the data attribute with the power to correct.
-        cell_temp : str
-            The column name of the data attribute with the cell temperature.
-        power_temp_coeff : numeric, default None
-            By default trys to use a value from self.power_temp_coeff attribute. Pass
-            a value to use a different power temperature coefficient.
-        base_temp : numeric, default None
-            By default trys to use a value from self.base_temp attribute. Pass
-            a value to use a different base temperature.
-        verbose : bool, default True
-            Set to False to not print calculation explanation.
-            
-        Returns
-        -------
-        None
-            Adds column labeled 'power_tc' to CapData.data attribute.
-        """
-        if power_temp_coeff is not None:
-            power_temp_coeff = power_temp_coeff
-        else:
-            power_temp_coeff = self.power_temp_coeff
-        if base_temp is not None:
-            base_temp = base_temp
-        else:
-            base_temp = self.base_temp
-
-        self.data['power_tc'] = calcparams.temp_correct_power(
-            power=self.data[power],
-            cell_temp=self.data[cell_temp],
-            power_temp_coeff=power_temp_coeff,
-            base_temp=base_temp,
-            verbose=verbose
-        )
-        
     def rpoa_pvsyst(self, globbak, backshd, verbose=True):
         """Calculate the sum of PVsyst's global rear irradiance and rear shading and IAM losses.
 
@@ -3550,11 +3510,33 @@ class CapData(object):
             verbose=verbose
         )
 
-
     def custom_param(self, func, *args, **kwargs):
         """Applies the function `func` with kwargs and adds result as new column to `data`.
+        
+        Calculates and adds a new column to `data` using the function `func` with the
+        provided arguments and keyword arguments. See the functions in the calcparams
+        module for examples. 
+
+        Called by `util.process_reg_cols` to add new columns to the `data` attribute
+        while recursively processing and updating the `regression_cols` attribute.
+
+        Parameters
+        ----------
+        func : function
+            Function that takes a DataFrame as its first argument and returns a Series.
+            
+        Returns
+        -------
+        None
+            Adds a new column to the `data` attribute.
         """
         result = func.__name__
+        signature = inspect.signature(func)
+        for key in signature.parameters:
+            if key == 'data':
+                continue
+            if hasattr(self, key):
+                kwargs[key] = getattr(self, key)
         self.data[result] = func(self.data, *args, **kwargs)
 
 
