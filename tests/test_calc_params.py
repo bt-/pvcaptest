@@ -133,7 +133,11 @@ class TestCellTemp:
         "racking, module_type, expected",
         [
             ("open_rack", "glass_cell_glass", pd.Series([28.415, 29.43, 29.936])),
-            ("close_roof_mount", "glass_cell_glass", pd.Series([26.805, 27.81, 28.312])),
+            (
+                "close_roof_mount",
+                "glass_cell_glass",
+                pd.Series([26.805, 27.81, 28.312]),
+            ),
             ("insulated_back", "glass_cell_poly", pd.Series([26, 27, 27.5])),
         ],
     )
