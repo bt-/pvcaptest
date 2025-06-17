@@ -3403,39 +3403,6 @@ class CapData(object):
                 self.column_groups.data, orient='index'
         ).stack().to_frame().droplevel(1).to_excel(save_to, header=False)
 
-    def bom_temp(self, poa=None, temp_amb=None, wind_speed=None, module_type=None, racking=None, verbose=True):
-        """
-        Calculate back-of-module (bom) temperature from Sandia Module Temperature Model.
-        
-        Parameters
-        ----------
-        poa : str
-            The column name of the data attribute with the POA irradiance to use.
-        temp_amb : str
-            The column name of the data attribute with the ambient temperature to use.
-        wind_speed : str
-            The column name of the data attribute with the wind speed to use.
-        module_type : str, default None
-            By default uses value from CapData.module_type
-        racking : str, default None
-            By default uses value from CapData.racking
-        verbose : bool, default True
-            Set to False to not print calculation explanation.
-            
-        Returns
-        -------
-        None
-            Adds column labeled 'bom_temp' to CapData.data attribute.
-        """
-        self.data['bom_temp'] = calcparams.back_of_module_temp(
-            poa=self.data[poa],
-            temp_amb=self.data[temp_amb],
-            wind_speed=self.data[wind_speed],
-            module_type=self.module_type,
-            racking=self.racking,
-            verbose=verbose
-        )
-    
     def rpoa_pvsyst(self, globbak, backshd, verbose=True):
         """Calculate the sum of PVsyst's global rear irradiance and rear shading and IAM losses.
 

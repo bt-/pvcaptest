@@ -74,14 +74,23 @@ def power_temp_correct(
     if verbose:
         print(
             'Calculating and adding "temp_correct_power" column as '
-            f'({power}) / (1 + (({power_temp_coeff} / 100) * '
-            f'({cell_temp} - {base_temp})))'
+            f"({power}) / (1 + (({power_temp_coeff} / 100) * "
+            f"({cell_temp} - {base_temp})))"
         )
     power = data[power]
     cell_temp = data[cell_temp]
     return power / (1 + ((power_temp_coeff / 100) * (cell_temp - base_temp)))
 
-def back_of_module_temp(**kwargs):
+
+def bom_temp(
+    data,
+    poa=None,
+    temp_amb=None,
+    wind_speed=None,
+    module_type="glass_cell_poly",
+    racking="open_rack",
+    verbose=True,
+):
     """Calculate back of module temperature from measured weather data.
 
     Calculate back of module temperature from POA irradiance, ambient
@@ -92,12 +101,15 @@ def back_of_module_temp(**kwargs):
 
     Parameters
     ----------
-    poa : numeric or Series
-        POA irradiance in W/m^2.
-    temp_amb : numeric or Series
-        Ambient temperature in degrees C.
-    wind_speed : numeric or Series
-        Measured wind speed (m/sec) corrected to measurement height of
+    data : DataFrame
+        DataFrame with the source data for calculations. Usually the `data` attribute
+        of a CapData instance.
+    poa : str
+        Column name for POA irradiance in W/m^2.
+    temp_amb : str
+        Column name for Ambient temperature in degrees C.
+    wind_speed : str
+        Column name for Measured wind speed (m/sec) corrected to measurement height of
         10 meters.
     module_type : str, default 'glass_cell_poly'
         Any of glass_cell_poly, glass_cell_glass, or 'poly_tf_steel'.
@@ -109,18 +121,15 @@ def back_of_module_temp(**kwargs):
     numeric or Series
         Back of module temperatures.
     """
-    kwargs.setdefault("racking", "open_rack")
-    kwargs.setdefault("module_type", "glass_cell_poly")
-    a = EMP_HEAT_COEFF[kwargs["racking"]][kwargs["module_type"]]["a"]
-    b = EMP_HEAT_COEFF[kwargs["racking"]][kwargs["module_type"]]["b"]
-    # if kwargs.get('verbose', True):
-    #     param_ids = get_param_ids(kwargs)
-    #     print(
-    #         'Calculating and adding "bom_temp" column as '
-    #         f'{param_ids["poa"]} * e^({a} + {b} * {param_ids["wind_speed"]}) + {param_ids["temp_amb"]}. '
-    #         f'Coefficients a and b assume "{kwargs['module_type']}" modules and "{kwargs['racking']}" racking.'
-    #     )
-    return kwargs["poa"] * np.exp(a + b * kwargs["wind_speed"]) + kwargs["temp_amb"]
+    a = EMP_HEAT_COEFF[racking][module_type]["a"]
+    b = EMP_HEAT_COEFF[racking][module_type]["b"]
+    if verbose:
+        print(
+            'Calculating and adding "bom_temp" column as '
+            f'{poa} * e^({a} + {b} * {wind_speed}) + {temp_amb}. '
+            f'Coefficients a and b assume "{module_type}" modules and "{racking}" racking.'
+        )
+    return data[poa] * np.exp(a + b * data[wind_speed]) + data[temp_amb]
 
 
 def cell_temp(

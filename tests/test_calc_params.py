@@ -60,38 +60,35 @@ class TestTempCorrectPower:
         assert pytest.approx(corr_power.iloc[0], 0.3) == 10.093
 
 
-class TestBackOfModuleTemp:
+class TestBomTemp:
     """Test calculation of back of module (BOM) temperature from weather."""
 
-    def test_float_inputs(self, capsys):
-        assert calcparams.back_of_module_temp(800, 30, 3) == pytest.approx(48.1671)
-        captured = capsys.readouterr()
-        assert captured.out.rstrip("\n") == (
-            'Calculating and adding "bom_temp" column as '
-            "800 * e^(-3.56 + -0.075 * 3) + 30. "
-            'Coefficients a and b assume "glass_cell_poly" modules and "open_rack" racking.'
-        )
-
-    def test_float_inputs_no_output(self, capsys):
-        assert calcparams.back_of_module_temp(
-            800, 30, 3, verbose=False
-        ) == pytest.approx(48.1671)
+    def test_no_output_when_verbose_false(self, capsys):
+        """Ensure bom_temp does not print when verbose is False"""
+        df = pd.DataFrame({
+            "poa": [800],
+            "temp_amb": [25],
+            "wind": [1.0],
+        })
+        _ = calcparams.bom_temp(df, "poa", "temp_amb", "wind", verbose=False)
         captured = capsys.readouterr()
         assert captured.out == ""
 
-    def test_series_inputs(self, capsys):
+    def test_dataframe_inputs(self, capsys):
         ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
-        poa = pd.Series([805, 810, 812], index=ix, name="poa")
-        temp_amb = pd.Series([26, 27, 27.5], index=ix, name="temp_amb")
-        wind = pd.Series([0.5, 1, 2.5], index=ix, name="wind")
+        df = pd.DataFrame(
+            {
+                "poa": [805, 810, 812],
+                "temp_amb": [26, 27, 27.5],
+                "wind": [0.5, 1, 2.5],
+            },
+            index=ix,
+        )
 
         exp_results = pd.Series([48.0506544, 48.3709869, 46.6442104], index=ix)
 
-        assert (
-            pd.testing.assert_series_equal(
-                calcparams.back_of_module_temp(poa, temp_amb, wind), exp_results
-            )
-            is None
+        pd.testing.assert_series_equal(
+            calcparams.bom_temp(df, "poa", "temp_amb", "wind"), exp_results
         )
         captured = capsys.readouterr()
         assert captured.out.rstrip("\n") == (
@@ -111,10 +108,18 @@ class TestBackOfModuleTemp:
         ],
     )
     def test_emp_heat_coeffs(self, racking, module_type, expected):
-        bom = calcparams.back_of_module_temp(
-            800, 28, 1.5, module_type=module_type, racking=racking
+        # create single-row DataFrame
+        df = pd.DataFrame({
+            "poa": [800],
+            "temp_amb": [28],
+            "wind": [1.5],
+        })
+        bom = calcparams.bom_temp(
+            df, "poa", "temp_amb", "wind", module_type=module_type, racking=racking, verbose=False
         )
-        assert bom == pytest.approx(expected)
+        assert bom.iloc[0] == pytest.approx(expected)
+    
+    
 
 
 class TestCellTemp:
