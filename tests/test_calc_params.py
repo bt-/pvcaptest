@@ -196,19 +196,20 @@ class TestAvgTypCellTemp:
         assert calcparams.avg_typ_cell_temp(df, "poa", "cell_temp") == pytest.approx(26.8356)
 
 
-class TestPVsystRearIrradiance:
-    def test_float_inputs(self):
-        assert calcparams.pvsyst_rear_irradiance(100, 10) == 110
-
+class TestRpoaPvsyst:
     def test_series_inputs(self):
         ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
         globbak = pd.Series([100, 110, 120], index=ix)
         backshd = pd.Series([10, 15, 20], index=ix)
+        df = pd.DataFrame({
+            'GlobBak': globbak,
+            'BackShd': backshd,
+        }, index=ix)
 
         exp_results = pd.Series([110, 125, 140], index=ix)
 
         pd.testing.assert_series_equal(
-            calcparams.pvsyst_rear_irradiance(globbak, backshd), exp_results
+            calcparams.rpoa_pvsyst(df), exp_results
         )
 
 

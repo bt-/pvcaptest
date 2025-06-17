@@ -3403,29 +3403,6 @@ class CapData(object):
                 self.column_groups.data, orient='index'
         ).stack().to_frame().droplevel(1).to_excel(save_to, header=False)
 
-    def rpoa_pvsyst(self, globbak, backshd, verbose=True):
-        """Calculate the sum of PVsyst's global rear irradiance and rear shading and IAM losses.
-
-        Parameters
-        ----------
-        globbak : str
-            Column name for global rear irradiance (W/m^2).
-        backshd : str
-            Column name for rear shading and IAM losses (W/m^2).
-        verbose : bool, default True
-            Set to False to not print calculation explanation.
-
-        Returns
-        -------
-        None
-            Adds column labeled 'rpoa_pvsyst' to CapData.data attribute.
-        """
-        self.data['rpoa_pvsyst'] = calcparams.pvsyst_rear_irradiance(
-            globbak=self.data[globbak],
-            backshd=self.data[backshd],
-            verbose=verbose
-        )
-    
     def e_total(self, poa, rpoa, bifaciality=None, bifacial_frac=None, rear_shade=None, verbose=True):
         """
         Calculate total irradiance from POA and rear irradiance.

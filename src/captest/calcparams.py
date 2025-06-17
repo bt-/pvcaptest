@@ -201,22 +201,32 @@ def avg_typ_cell_temp(data, poa, cell_temp, verbose=True):
     return (data[poa] * data[cell_temp]).sum() / data[poa].sum()
 
 
-def pvsyst_rear_irradiance(globbak, backshd, verbose=True):
+def rpoa_pvsyst(data, globbak='GlobBak', backshd='BackShd', verbose=True):
     """Calculate the sum of PVsyst's global rear irradiance and rear shading and IAM losses.
 
     Parameters
     ----------
-    globbak : numeric or Series
-        Global rear irradiance (W/m^2).
-    backshd : numeric or Series
-        Rear shading and IAM losses (W/m^2).
+    data : DataFrame
+        DataFrame with the source data for calculations. Usually the `data` attribute
+        of a CapData instance containing PVsyst 8760 data.
+    globbak : str, default 'GlobBak'
+        Column name for global rear irradiance (W/m^2).
+    backshd : str, default 'BackShd'
+        Column name for rear shading and IAM losses (W/m^2).
+    verbose : bool, default True
+        Set to False to not print calculation explanation.
 
     Returns
     -------
-    numeric or Series
+    Series
         Sum of global rear irradiance and rear shading and IAM losses.
     """
-    return globbak + backshd
+    if verbose:
+        print(
+            'Calculating and adding "rpoa_pvsyst" column as '
+            f'{globbak} + {backshd}. '
+        )
+    return data[globbak] + data[backshd]
 
 
 def e_total(**kwargs):
