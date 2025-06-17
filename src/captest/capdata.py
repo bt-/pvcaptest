@@ -78,7 +78,6 @@ else:
 
 from captest import util
 from captest import plotting
-from captest import calcparams
 
 plot_colors_brewer = {'real_pwr': ['#2b8cbe', '#7bccc4', '#bae4bc', '#f0f9e8'],
                       'irr_poa': ['#e31a1c', '#fd8d3c', '#fecc5c', '#ffffb2'],
@@ -3402,57 +3401,6 @@ class CapData(object):
         pd.DataFrame.from_dict(
                 self.column_groups.data, orient='index'
         ).stack().to_frame().droplevel(1).to_excel(save_to, header=False)
-
-    def e_total(self, poa, rpoa, bifaciality=None, bifacial_frac=None, rear_shade=None, verbose=True):
-        """
-        Calculate total irradiance from POA and rear irradiance.
-        
-        Wraps the calcparams.e_total function to calculate the total irradiance
-        for bifacial modules, accounting for bifaciality factor and the fraction
-        of the array that is bifacial.
-        
-        Parameters
-        ----------
-        poa : str
-            Column name for POA irradiance (W/m^2).
-        rpoa : str
-            Column name for rear irradiance (W/m^2).
-        bifaciality : numeric, default None
-            Bifaciality factor. If None, uses value from CapData.bifaciality if available,
-            otherwise defaults to 0.7.
-        bifacial_frac : numeric, default None
-            Fraction of total array nameplate power that is bifacial. If None, uses value
-            from CapData.bifacial_frac if available, otherwise defaults to 1.
-        rear_shade : numeric, default None
-            Fraction of rear irradiance that is lost due to shading. Set to decimal
-            fraction, e.g. 0.12, to include in calculation of `e_total`. If None, uses
-            value from CapData.rear_shade if available, otherwise defaults to 0.
-        verbose : bool, default True
-            Set to False to not print calculation explanation.
-        
-        Returns
-        -------
-        None
-            Adds column labeled 'e_total' to CapData.data attribute.
-        """
-        # Use instance attributes if available, otherwise use defaults
-        if bifaciality is None:
-            bifaciality = getattr(self, 'bifaciality', 0.7)
-            
-        if bifacial_frac is None:
-            bifacial_frac = getattr(self, 'bifacial_frac', 1)
-
-        if rear_shade is None:
-            rear_shade = getattr(self, 'rear_shade', 0)
-
-        self.data['e_total'] = calcparams.e_total(
-            poa=self.data[poa],
-            rpoa=self.data[rpoa],
-            bifaciality=bifaciality,
-            bifacial_frac=bifacial_frac,
-            rear_shade=rear_shade,
-            verbose=verbose
-        )
 
     def custom_param(self, func, *args, **kwargs):
         """Applies the function `func` with kwargs and adds result as new column to `data`.

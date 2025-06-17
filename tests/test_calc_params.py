@@ -214,34 +214,49 @@ class TestRpoaPvsyst:
 
 
 class TestEtotal:
+    def _make_df(self, poa_vals, rear_vals):
+        return pd.DataFrame({"poa": poa_vals, "rear": rear_vals})
+
     def test_numeric_inputs(self):
-        assert calcparams.e_total(poa=100, rpoa=10) == 107
+        df = self._make_df([100], [10])
+        result = calcparams.e_total(df, "poa", "rear")
+        assert result.iloc[0] == 107
 
     def test_numeric_non_default_bifaciality(self):
-        assert calcparams.e_total(poa=100, rpoa=10, bifaciality=0.5) == 105
+        df = self._make_df([100], [10])
+        result = calcparams.e_total(df, "poa", "rear", bifaciality=0.5)
+        assert result.iloc[0] == 105
 
     def test_numeric_non_default_bifi_frac(self):
-        assert (
-            calcparams.e_total(poa=100, rpoa=10, bifaciality=1, bifacial_frac=0.5)
-            == 105
-        )
+        df = self._make_df([100], [10])
+        result = calcparams.e_total(df, "poa", "rear", bifaciality=1, bifacial_frac=0.5)
+        assert result.iloc[0] == 105
 
     def test_numeric_non_default_bifaciality_and_bifacial_frac(self):
-        assert (
-            calcparams.e_total(poa=100, rpoa=20, bifaciality=0.5, bifacial_frac=0.5)
-            == 105
-        )
+        df = self._make_df([100], [20])
+        result = calcparams.e_total(df, "poa", "rear", bifaciality=0.5, bifacial_frac=0.5)
+        assert result.iloc[0] == 105
 
     def test_series_inputs(self):
         ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
-        poa = pd.Series([100, 110, 120], index=ix)
-        rear = pd.Series([100, 150, 200], index=ix)
-
+        df = self._make_df([100, 110, 120], [100, 150, 200])
+        df.index = ix
         exp_results = pd.Series([170, 215, 260], index=ix)
-
         pd.testing.assert_series_equal(
-            calcparams.e_total(poa=poa, rpoa=rear), exp_results, check_dtype=False
+            calcparams.e_total(df, "poa", "rear"), exp_results, check_dtype=False
         )
 
     def test_rear_shade(self):
-        assert calcparams.e_total(poa=100, rpoa=20, rear_shade=0.5) == 107
+        df = self._make_df([100], [20])
+        result = calcparams.e_total(df, "poa", "rear", rear_shade=0.5)
+        assert result.iloc[0] == 107
+
+    def test_output_message(self, capsys):
+        """Ensure e_total prints correct formula when verbose is True"""
+        df = self._make_df([100], [10])
+        _ = calcparams.e_total(df, "poa", "rear")
+        captured = capsys.readouterr()
+        assert captured.out.rstrip("\n") == (
+            'Calculating and adding "e_total" column as '
+            'poa + rear * 0.7 * 1 * (1 - 0)'
+        )

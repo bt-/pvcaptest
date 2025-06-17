@@ -126,7 +126,7 @@ def bom_temp(
     if verbose:
         print(
             'Calculating and adding "bom_temp" column as '
-            f'{poa} * e^({a} + {b} * {wind_speed}) + {temp_amb}. '
+            f"{poa} * e^({a} + {b} * {wind_speed}) + {temp_amb}. "
             f'Coefficients a and b assume "{module_type}" modules and "{racking}" racking.'
         )
     return data[poa] * np.exp(a + b * data[wind_speed]) + data[temp_amb]
@@ -201,7 +201,7 @@ def avg_typ_cell_temp(data, poa, cell_temp, verbose=True):
     return (data[poa] * data[cell_temp]).sum() / data[poa].sum()
 
 
-def rpoa_pvsyst(data, globbak='GlobBak', backshd='BackShd', verbose=True):
+def rpoa_pvsyst(data, globbak="GlobBak", backshd="BackShd", verbose=True):
     """Calculate the sum of PVsyst's global rear irradiance and rear shading and IAM losses.
 
     Parameters
@@ -223,22 +223,26 @@ def rpoa_pvsyst(data, globbak='GlobBak', backshd='BackShd', verbose=True):
     """
     if verbose:
         print(
-            'Calculating and adding "rpoa_pvsyst" column as '
-            f'{globbak} + {backshd}. '
+            'Calculating and adding "rpoa_pvsyst" column as ' f"{globbak} + {backshd}. "
         )
     return data[globbak] + data[backshd]
 
 
-def e_total(**kwargs):
+def e_total(
+    data, poa, rpoa, bifaciality=0.7, bifacial_frac=1, rear_shade=0, verbose=True
+):
     """
     Calculate total irradiance from POA and rear irradiance.
 
     Parameters
     ----------
-    poa : numeric or Series
-        POA irradiance (W/m^2).
-    rpoa : numeric or Series
-        Rear irradiance (W/m^2).
+    data : DataFrame
+        DataFrame with the source data for calculations. Usually the `data` attribute
+        of a CapData instance.
+    poa : str
+        Column name for POA irradiance (W/m^2).
+    rpoa : str
+        Column name for rear irradiance (W/m^2).
     bifaciality : numeric, default 0.7
         Bifaciality factor.
     bifacial_frac : numeric, default 1
@@ -254,17 +258,11 @@ def e_total(**kwargs):
     numeric or Series
         Total plane of array irradiance.
     """
-    kwargs.setdefault("bifaciality", 0.7)
-    kwargs.setdefault("bifacial_frac", 1)
-    kwargs.setdefault("rear_shade", 0)
-    if kwargs.get("verbose", True):
-        param_ids = get_param_ids(kwargs)
+    if verbose:
         print(
             'Calculating and adding "e_total" column as '
-            f'{param_ids["poa"]} + {param_ids["rpoa"]} * '
-            f'{param_ids["bifaciality"]} * {param_ids["bifacial_frac"]} * '
-            f'(1 - {param_ids["rear_shade"]})'
+            f'{poa} + {rpoa} * '
+            f'{bifaciality} * {bifacial_frac} * '
+            f'(1 - {rear_shade})'
         )
-    return kwargs["poa"] + kwargs["rpoa"] * kwargs["bifaciality"] * kwargs[
-        "bifacial_frac"
-    ] * (1 - kwargs["rear_shade"])
+    return data[poa] + data[rpoa] * bifaciality * bifacial_frac * (1 - rear_shade)
