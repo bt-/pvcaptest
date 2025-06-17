@@ -18,28 +18,6 @@ EMP_HEAT_COEFF = {
 }
 
 
-def get_param_ids(params):
-    """Get identifier strings for parameters.
-
-    For each parameter, returns its name attribute if it has one,
-    otherwise returns its string representation.
-
-    Parameters
-    ----------
-    params : dict
-        Dictionary of parameter values to get identifiers for
-
-    Returns
-    -------
-    dict
-        Dictionary mapping parameter names to their identifier strings
-    """
-    return {
-        name: param.name if hasattr(param, "name") else str(param)
-        for name, param in params.items()
-    }
-
-
 def power_temp_correct(
     data, power, cell_temp, power_temp_coeff=None, base_temp=25, verbose=True
 ):
@@ -261,8 +239,8 @@ def e_total(
     if verbose:
         print(
             'Calculating and adding "e_total" column as '
-            f'{poa} + {rpoa} * '
-            f'{bifaciality} * {bifacial_frac} * '
-            f'(1 - {rear_shade})'
+            f"{poa} + {rpoa} * "
+            f"{bifaciality} * {bifacial_frac} * "
+            f"(1 - {rear_shade})"
         )
     return data[poa] + data[rpoa] * bifaciality * bifacial_frac * (1 - rear_shade)
