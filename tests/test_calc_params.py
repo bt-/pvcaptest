@@ -185,10 +185,15 @@ class TestCellTemp:
 class TestAvgTypCellTemp:
     def test_math(self):
         ix = pd.date_range(start="1/1/2021 12:00", freq="h", periods=3)
-        poa = pd.Series([805, 810, 812], index=ix)
-        cell_temp = pd.Series([26, 27, 27.5], index=ix)
+        df = pd.DataFrame(
+            {
+                "poa": [805, 810, 812],
+                "cell_temp": [26, 27, 27.5],
+            },
+            index=ix,
+        )
 
-        assert calcparams.avg_typ_cell_temp(poa, cell_temp) == pytest.approx(26.8356)
+        assert calcparams.avg_typ_cell_temp(df, "poa", "cell_temp") == pytest.approx(26.8356)
 
 
 class TestPVsystRearIrradiance:

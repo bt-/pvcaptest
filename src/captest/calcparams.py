@@ -180,22 +180,25 @@ def cell_temp(
     )
 
 
-def avg_typ_cell_temp(poa, cell_temp, verbose=True):
+def avg_typ_cell_temp(data, poa, cell_temp, verbose=True):
     """Calculate irradiance weighted cell temperature.
 
     Parameters
     ----------
-    poa : Series
-        POA irradiance (W/m^2).
-    cell_temp : Series
-        Cell temperature for each interval (degrees C).
+    data : DataFrame
+        DataFrame with the source data for calculations. Usually the `data` attribute
+        of a CapData instance.
+    poa : str
+        Column name for POA irradiance (W/m^2).
+    cell_temp : str
+        Column name for Cell temperature for each interval (degrees C).
 
     Returns
     -------
     float
         Average irradiance-weighted cell temperature.
     """
-    return (poa * cell_temp).sum() / poa.sum()
+    return (data[poa] * data[cell_temp]).sum() / data[poa].sum()
 
 
 def pvsyst_rear_irradiance(globbak, backshd, verbose=True):
