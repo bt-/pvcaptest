@@ -2225,35 +2225,6 @@ class CapData(object):
         self.create_column_group_attributes()
         self.create_agg_attributes()
 
-    def process_regression_columns(self, verbose=True):
-        """
-        Walk the regression column dictionary and calculate parameters.
-
-        See util.process_reg_cols for additional documentation.
-        
-        Parameters
-        ----------
-        verbose : bool, default True
-            By default prints summary of aggregations and parameter calculations
-            performed while traversing the `regression_cols` dictionary.
-            Set to False to prevent all output.
-        """
-        if not len(self.summary) == 0:
-            warnings.warn('The data_filtered attribute has been overwritten '
-                          'and previously applied filtering steps have been '
-                          'lost.  It is recommended to use agg_sensors '
-                          'before any filtering methods.')
-        # reset summary data
-        self.summary_ix = []
-        self.summary = []
-
-        self.regression_cols_preprocess = copy.deepcopy(self.regression_cols)
-        util.process_reg_cols(self.regression_cols, cd=self, verbose=verbose)
-        self.data_filtered = self.data.copy()
-        self.create_column_group_attributes()
-        if 'agg' in self.column_groups:
-            self.create_agg_attributes()
-
     def data_columns_to_excel(self, sort_by_reversed_names=True):
         """
         Write the columns of data to an excel file as a template for a column grouping.
@@ -3401,6 +3372,35 @@ class CapData(object):
         pd.DataFrame.from_dict(
                 self.column_groups.data, orient='index'
         ).stack().to_frame().droplevel(1).to_excel(save_to, header=False)
+
+    def process_regression_columns(self, verbose=True):
+        """
+        Walk the regression column dictionary and calculate parameters.
+
+        See util.process_reg_cols for additional documentation.
+        
+        Parameters
+        ----------
+        verbose : bool, default True
+            By default prints summary of aggregations and parameter calculations
+            performed while traversing the `regression_cols` dictionary.
+            Set to False to prevent all output.
+        """
+        if not len(self.summary) == 0:
+            warnings.warn('The data_filtered attribute has been overwritten '
+                          'and previously applied filtering steps have been '
+                          'lost.  It is recommended to use agg_sensors '
+                          'before any filtering methods.')
+        # reset summary data
+        self.summary_ix = []
+        self.summary = []
+
+        self.regression_cols_preprocess = copy.deepcopy(self.regression_cols)
+        util.process_reg_cols(self.regression_cols, cd=self, verbose=verbose)
+        self.data_filtered = self.data.copy()
+        self.create_column_group_attributes()
+        if 'agg' in self.column_groups:
+            self.create_agg_attributes()
 
     def custom_param(self, func, *args, **kwargs):
         """Applies the function `func` with kwargs and adds result as new column to `data`.
