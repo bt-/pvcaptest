@@ -18,6 +18,7 @@ from captest import columngroups as cg
 from captest import io
 from captest import(
     load_pvsyst,
+    calcparams,
 )
 
 data = np.arange(0, 1300, 54.167)
@@ -2562,6 +2563,29 @@ class TestCreateColumnGroupAttributes():
             # Check that the attribute returns the correct data
             pd.testing.assert_frame_equal(attr_data, expected_data)
     
+
+class TestProcessRegressionColumns():
+    def test_e_total_reg_cols(self, meas):
+        meas.regression_cols = {
+            'e_total': (calcparams.e_total, {
+                'poa': ('irr_poa_pyran', 'mean'),
+                'rpoa': ('irr_poa_pyran', 'mean')
+            })
+        }
+        meas.process_regression_columns()
+        assert 'e_total' in meas.data.columns
+        assert 'e_total' in meas.data_filtered.columns
+        assert meas.regression_cols == {'e_total': 'e_total'}
+        
+    def test_agg_amb_temp(self, meas):
+        meas.regression_cols = {
+            'temp_amb': ('temp_amb', 'mean')
+        }
+        meas.process_regression_columns()
+        assert 'temp_amb_mean_agg' in meas.data.columns
+        assert 'temp_amb_mean_agg' in meas.data_filtered.columns
+        assert meas.regression_cols == {'temp_amb': 'temp_amb_mean_agg'}
+
 
 if __name__ == '__main__':
     unittest.main()
