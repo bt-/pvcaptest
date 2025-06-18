@@ -3427,8 +3427,16 @@ class CapData(object):
         for key in signature.parameters:
             if key == 'data':
                 continue
-            if hasattr(self, key):
-                kwargs[key] = getattr(self, key)
+            if key not in kwargs or kwargs[key] is None:
+                if key in self.column_groups.data.keys():
+                    raise ValueError(
+                        f'The kwarg {key} of the function {func.__name__} is also a '
+                        f'column groups id. '
+                        f'Change the name of the column group id or include the kwarg '
+                        f'in the CapData.regression_cols'
+                    )
+                if hasattr(self, key):
+                    kwargs[key] = getattr(self, key)
         self.data[result] = func(self.data, *args, **kwargs)
 
 

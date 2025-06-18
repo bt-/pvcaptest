@@ -361,10 +361,12 @@ def process_reg_cols(
                 agg_cache[cache_key] = agg_name
                 
             update_by_path(original_calc_params, dict_path, agg_name)
-            process_reg_cols(original_calc_params, cd=cd, agg_cache=agg_cache, verbose=verbose)
+            process_reg_cols(
+                original_calc_params, cd=cd, agg_cache=agg_cache, verbose=verbose)
         if isinstance(calc_params[1], dict):
-            if all([isinstance(values, str) for values in calc_params[1].values()]):
-                # Check if any values are column group IDs pointing to groups with only one column
+            if all([isinstance(values, str) or isinstance(values, (float, int)) for values in calc_params[1].values()]):
+                # Check if any values are column group IDs pointing to groups with only
+                # one column
                 # If so, replace them with the actual column name
                 updated_params = {}
                 for key, value in calc_params[1].items():
@@ -382,13 +384,8 @@ def process_reg_cols(
                         )
                     else:
                         updated_params[key] = value
-                # Need to add call to func here passing kwargs
-                # The functions need to modify CapData.Data and add the result in a new
-                # column named func.__name__
-                # The functions should be CapData methods wrapping the functions in the
-                # calcparams module
-                # args or kwargs that are not Series of Data should be attributes of the
-                # CapData instance
+                # Call the function and pass kwargs
+                # func here is or should be similar to calcparams functions
                 cd.custom_param(func, **updated_params, verbose=verbose)
                 # Update the original calc_params dictionary at the current path
                 update_by_path(original_calc_params, dict_path, func.__name__)

@@ -2585,6 +2585,59 @@ class TestProcessRegressionColumns():
         assert 'temp_amb_mean_agg' in meas.data.columns
         assert 'temp_amb_mean_agg' in meas.data_filtered.columns
         assert meas.regression_cols == {'temp_amb': 'temp_amb_mean_agg'}
+        
+    def test_power_tc_from_amb_temp(self, meas):
+        meas.power_temp_coeff = -0.32
+        meas.regression_cols = {
+            'power_tc': (calcparams.power_temp_correct, {
+                'power': 'meter_power',
+                'cell_temp': (calcparams.cell_temp, {
+                    'bom': (calcparams.bom_temp, {
+                        'poa': ('irr_poa_pyran', 'mean'),
+                        'temp_amb': ('temp_amb', 'mean'),
+                        'wind_speed': ('wind', 'mean'),
+                    }),
+                    'poa': ('irr_poa_pyran', 'mean'),
+                }),
+            })
+        }
+        meas.process_regression_columns()
+        assert 'power_temp_correct' in meas.data.columns
+        assert 'power_temp_correct' in meas.data_filtered.columns
+        assert meas.regression_cols == {'power_tc': 'power_temp_correct'}
+
+    def test_col_grp_id_conflict(self, meas):
+        """Expect ValueError when a kwarg name conflicts with a column-group ID.
+        
+        Ommitted the temp_amb kwarg to calcparams.bom_temp here, which is the
+        overlapping kwarg and column group id. The column grouping used in this
+        test does not include a 'wind_speed' group, it is just 'wind'.
+        """
+        meas.regression_cols = {
+            'bom': (calcparams.bom_temp, {
+                'poa': ('irr_poa_pyran', 'mean'),
+                'wind_speed': ('wind', 'mean'),
+            })
+        }
+        with pytest.raises(
+            ValueError,
+            match=r"kwarg temp_amb.*bom_temp.*column groups id.*Change the name of.*"
+        ):
+            meas.process_regression_columns()
+
+    def test_pass_kwarg_value_in_regression_columns(self, meas):
+        """Check that a kwarg for a calcparams function passes through correctly"""
+        meas.regression_cols = {
+            'power_tc': (calcparams.power_temp_correct, {
+                'power': 'meter_power',
+                'cell_temp': ('temp_amb', 'mean'),
+                'power_temp_coeff': -0.38,
+            })
+        }
+        meas.process_regression_columns()
+        assert 'power_temp_correct' in meas.data.columns
+        assert 'power_temp_correct' in meas.data_filtered.columns
+        assert meas.regression_cols == {'power_tc': 'power_temp_correct'}
 
 
 if __name__ == '__main__':
