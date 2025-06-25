@@ -298,3 +298,42 @@ class TestGetCommonTimestep:
         df = pd.DataFrame({"a": [1, 2, 4]}, index=ix)
         time_step = util.get_common_timestep(df, units="m", string_output=False)
         assert time_step == 60.0
+
+
+class TestParseRegressionFormula:
+    def test_astm(self):
+        lhs, rhs = util.parse_regression_formula(
+            "power ~ poa + I(poa * poa) + I(poa * t_amb) + I(poa * w_vel) - 1"
+        )
+        assert lhs == ["power"]
+        assert rhs == ["poa", "t_amb", "w_vel"]
+
+    def test_power_temp_corr_poa(self):
+        lhs, rhs = util.parse_regression_formula("power_tc ~ poa")
+        assert lhs == ["power_tc"]
+        assert rhs == ["poa"]
+
+    def test_power_temp_corr_poa_intercept(self):
+        lhs, rhs = util.parse_regression_formula("power_tc ~ poa - 1")
+        assert lhs == ["power_tc"]
+        assert rhs == ["poa"]
+
+    def test_power_temp_corr_poa_rpoa(self):
+        lhs, rhs = util.parse_regression_formula("power_tc ~ poa + rpoa")
+        assert lhs == ["power_tc"]
+        assert rhs == ["poa", "rpoa"]
+
+    def test_outboard_poa_total(self):
+        lhs, rhs = util.parse_regression_formula(
+            "power ~ poa_total + I(poa_total * fpoa) + I(poa_total * rpoa) +"
+            "I(poa_total * t_amb) + I(poa_total * w_vel)"
+        )
+        assert lhs == ["power"]
+        assert rhs == ["poa_total", "fpoa", "rpoa", "t_amb", "w_vel"]
+
+    def test_outboard_poa_rpoa_separate(self):
+        lhs, rhs = util.parse_regression_formula(
+            "power ~ (poa + rpoa) * (1 + poa + rpoa + t_amb + w_vel - 1)"
+        )
+        assert lhs == ["power"]
+        assert rhs == ["poa", "rpoa", "t_amb", "w_vel"]

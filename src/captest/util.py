@@ -1,10 +1,13 @@
 import copy
-import warnings
-import re
 import json
-import yaml
+import re
+import warnings
+from typing import List, Tuple
+
 import numpy as np
 import pandas as pd
+import yaml
+from patsy import ModelDesc
 
 
 def read_json(path):
@@ -22,7 +25,7 @@ def read_yaml(path):
     return data
 
 
-def get_common_timestep(data, units='m', string_output=True):
+def get_common_timestep(data, units="m", string_output=True):
     """
     Get the most commonly occuring timestep of data as frequency string.
 
@@ -44,17 +47,10 @@ def get_common_timestep(data, units='m', string_output=True):
         returned.
         If `string_output` is false, then a numeric value is returned.
     """
-    units_abbrev = {
-        'D': 'D',
-        'M': 'M',
-        'Y': 'Y',
-        'h': 'H',
-        'm': 'min',
-        's': 'S'
-    }
+    units_abbrev = {"D": "D", "M": "M", "Y": "Y", "h": "H", "m": "min", "s": "S"}
     common_timestep = data.index.to_series().diff().mode().values[0]
-    common_timestep_tdelta = common_timestep.astype('timedelta64[m]')
-    freq =common_timestep_tdelta / np.timedelta64(1, units)
+    common_timestep_tdelta = common_timestep.astype("timedelta64[m]")
+    freq = common_timestep_tdelta / np.timedelta64(1, units)
     if string_output:
         try:
             return str(int(freq)) + units_abbrev[units]
@@ -74,7 +70,7 @@ def reindex_datetime(data, file_name=None, report=False):
     ----------
     data : DataFrame
         DataFrame to be reindexed.
-    file_name : str, default None   
+    file_name : str, default None
         Name of file being reindexed. Used for warning message.
 
     Returns
@@ -84,7 +80,7 @@ def reindex_datetime(data, file_name=None, report=False):
     data_index_length = data.shape[0]
     df = data.copy()
     df.sort_index(inplace=True)
-    print('before calling get common timestep')
+    print("before calling get common timestep")
     freq_str = get_common_timestep(data, string_output=True)
     print(freq_str)
     full_ix = pd.date_range(start=df.index[0], end=df.index[-1], freq=freq_str)
@@ -95,26 +91,23 @@ def reindex_datetime(data, file_name=None, report=False):
         dropped_indices = df[duplicated].index
         # warning prints out of order in jupyter lab but not ipython, jupyter lab issue
         warnings.warn(
-            f'Dropping duplicate indices from {file_name} before reindexing: {dropped_indices}',
+            f"Dropping duplicate indices from {file_name} before reindexing: {dropped_indices}",
             UserWarning,
         )
-        df = df[~duplicated] # drop rows with duplicate indices before reindexing
+        df = df[~duplicated]  # drop rows with duplicate indices before reindexing
         df = df.reindex(index=full_ix)
     df_index_length = df.shape[0]
     missing_intervals = df_index_length - data_index_length
 
     if report:
-        print('Frequency determined to be ' + freq_str + ' minutes.')
-        print('{:,} intervals added to index.'.format(missing_intervals))
-        print('')
+        print("Frequency determined to be " + freq_str + " minutes.")
+        print("{:,} intervals added to index.".format(missing_intervals))
+        print("")
 
     return df, missing_intervals, freq_str
 
-def generate_irr_distribution(
-    lowest_irr,
-    highest_irr,
-    rng=np.random.default_rng(82)
-):
+
+def generate_irr_distribution(lowest_irr, highest_irr, rng=np.random.default_rng(82)):
     """
     Create a list of increasing values similar to POA irradiance data.
 
@@ -135,12 +128,10 @@ def generate_irr_distribution(
     -------
     irr_values : list
     """
-    irr_values = [lowest_irr, ]
-    possible_steps = (
-        rng.integers(1, high=8, size=10000)
-        + rng.random(size=10000)
-        - 1
-    )
+    irr_values = [
+        lowest_irr,
+    ]
+    possible_steps = rng.integers(1, high=8, size=10000) + rng.random(size=10000) - 1
     below_max = True
     while below_max:
         next_val = irr_values[-1] + rng.choice(possible_steps, replace=False)
@@ -178,16 +169,16 @@ def get_agg_column_name(group_id, agg_func):
         Name for the aggregated column.
     """
     if isinstance(agg_func, str):
-        col_name = group_id + '_' + agg_func + '_agg'
+        col_name = group_id + "_" + agg_func + "_agg"
     else:
-        col_name = group_id + '_' + agg_func.__name__ + '_agg'
+        col_name = group_id + "_" + agg_func.__name__ + "_agg"
     return col_name
 
 
 def update_by_path(dictionary, path, new_value=None, convert_callable=False):
     """
     Update a nested dictionary value by following a path list.
-    
+
     Parameters
     ----------
     dictionary : dict
@@ -199,7 +190,7 @@ def update_by_path(dictionary, path, new_value=None, convert_callable=False):
         will convert existing tuple to function name)
     convert_callable : bool, optional
         If True and new_value is None, converts tuple to function name
-    
+
     Returns
     -------
     updated_dictionary : dict
@@ -207,11 +198,11 @@ def update_by_path(dictionary, path, new_value=None, convert_callable=False):
     """
     # Get a reference to the current level in the dictionary
     current = dictionary
-    
+
     # Navigate to the parent of the target key
     for key in path[:-1]:
         current = current[key]
-    
+
     # If convert_callable is True and no new value provided, convert existing tuple
     if convert_callable and new_value is None:
         target_value = current[path[-1]]
@@ -220,19 +211,19 @@ def update_by_path(dictionary, path, new_value=None, convert_callable=False):
     else:
         # Update the target key with the new value
         current[path[-1]] = new_value
-    
+
     return dictionary
 
 
 def process_reg_cols(
-        original_calc_params,
-        calc_params=None,
-        key_id=None,
-        dict_path=None,
-        cd=None,
-        agg_cache=None,
-        verbose=True,
-    ):
+    original_calc_params,
+    calc_params=None,
+    key_id=None,
+    dict_path=None,
+    cd=None,
+    agg_cache=None,
+    verbose=True,
+):
     """
     Recursively process a regression columns dictionary that includes calculated parameters.
 
@@ -243,11 +234,11 @@ def process_reg_cols(
 
     An example tuple:
     (bom_temp, {'poa': 'irr_poa', 'temp_amb':'temp_amb', 'wind_speed':'wind_speed'})
-    
+
     Where bom_temp is a CapData method that accepts the kwargs poa, temp_amb,
     and wind_speed, which have the values (column group ids) irr_poa, temp_amb, wind_speed,
     respectively.
-    
+
     Additionally, column groups can be aggregated by specifying a tuple which contains
     two strings - the column group id (e.g., 'irr_poa') and the aggregation method
     (e.g. 'mean'). This will result in the CapData.agg_group method being called and
@@ -257,11 +248,11 @@ def process_reg_cols(
     If a regression parameter key is paired with a column groups id for a column
     group with only a single column, then that column name will replace the column group
     id.
-    
+
     The dictionary passed to `original_calc_params` may be nested like this example:
 
     calc_params_map = {
-        'power_tc': (CapData.power_tc, { 
+        'power_tc': (CapData.power_tc, {
             'power': 'real_pwr_mtr',
             'cell_temp': (CapData.cell_temp, {
                 'poa': ('irr_poa', 'mean'),
@@ -272,8 +263,8 @@ def process_reg_cols(
                 })
             })
         }),
-    } 
-    
+    }
+
     This function will start at the bottom of nested dictionaries and progressively
     call the functions with the kwargs replacing the function tuples with the function
     names or the aggregated column names.
@@ -296,7 +287,7 @@ def process_reg_cols(
     verbose : bool, default True
         Passed to the group aggregations and the parameter calculations. Set to False
         to prevent all summary output.
-    
+
     Returns
     -------
     None
@@ -305,13 +296,13 @@ def process_reg_cols(
     """
     if calc_params is None:
         calc_params = original_calc_params
-    
+
     if dict_path is None:
         dict_path = []
-        
+
     if agg_cache is None:
         agg_cache = {}
-    
+
     if isinstance(calc_params, dict):
         for calc_param_id, calc_inputs in calc_params.items():
             if isinstance(calc_inputs, tuple):
@@ -325,19 +316,22 @@ def process_reg_cols(
                     agg_cache=agg_cache,
                     verbose=verbose,
                 )
-            elif ((calc_inputs in cd.column_groups) and
-                  (len(cd.column_groups[calc_inputs]) == 1)):
+            elif (calc_inputs in cd.column_groups) and (
+                len(cd.column_groups[calc_inputs]) == 1
+            ):
                 dp_temp = copy.copy(dict_path)
                 dp_temp.extend([calc_param_id])
                 update_by_path(
-                    original_calc_params, dp_temp, cd.column_groups[calc_inputs][0])
-            elif ((calc_inputs in cd.column_groups) and
-                  (len(cd.column_groups[calc_inputs]) > 1)):
+                    original_calc_params, dp_temp, cd.column_groups[calc_inputs][0]
+                )
+            elif (calc_inputs in cd.column_groups) and (
+                len(cd.column_groups[calc_inputs]) > 1
+            ):
                 raise ValueError(
                     f'Looks like you specified a column group ID "{calc_inputs}" that '
-                    f'points to a group with more than one column. '
+                    f"points to a group with more than one column. "
                     f'Try replacing it with ("{calc_inputs}", "mean") or a different '
-                    f'aggregation method.'
+                    f"aggregation method."
                 )
     elif isinstance(calc_params, tuple):
         func = calc_params[0]
@@ -359,28 +353,32 @@ def process_reg_cols(
                     )
                 # Store in cache for future use
                 agg_cache[cache_key] = agg_name
-                
+
             update_by_path(original_calc_params, dict_path, agg_name)
             process_reg_cols(
-                original_calc_params, cd=cd, agg_cache=agg_cache, verbose=verbose)
+                original_calc_params, cd=cd, agg_cache=agg_cache, verbose=verbose
+            )
         if isinstance(calc_params[1], dict):
-            if all([isinstance(values, str) or isinstance(values, (float, int)) for values in calc_params[1].values()]):
+            if all(
+                [
+                    isinstance(values, str) or isinstance(values, (float, int))
+                    for values in calc_params[1].values()
+                ]
+            ):
                 # Check if any values are column group IDs pointing to groups with only
                 # one column
                 # If so, replace them with the actual column name
                 updated_params = {}
                 for key, value in calc_params[1].items():
-                    if (value in cd.column_groups and
-                        len(cd.column_groups[value]) == 1):
+                    if value in cd.column_groups and len(cd.column_groups[value]) == 1:
                         # Replace column group ID with the actual column name
                         updated_params[key] = cd.column_groups[value][0]
-                    elif (value in cd.column_groups and
-                          len(cd.column_groups[value]) > 1):
+                    elif value in cd.column_groups and len(cd.column_groups[value]) > 1:
                         raise ValueError(
                             f'Looks like you specified a column group ID "{value}" that '
-                            f'points to a group with more than one column. '
+                            f"points to a group with more than one column. "
                             f'Try replacing it with ("{value}", "mean") or a different '
-                            f'aggregation method.'
+                            f"aggregation method."
                         )
                     else:
                         updated_params[key] = value
@@ -391,7 +389,9 @@ def process_reg_cols(
                 update_by_path(original_calc_params, dict_path, func.__name__)
                 # Recursive call to reprocess again with the modified reg_cols dict
                 # Effect is to process the next layer up in the dict
-                process_reg_cols(original_calc_params, cd=cd, agg_cache=agg_cache, verbose=verbose)
+                process_reg_cols(
+                    original_calc_params, cd=cd, agg_cache=agg_cache, verbose=verbose
+                )
             else:
                 new_path = dict_path + [1]
                 process_reg_cols(
@@ -412,5 +412,72 @@ def process_reg_cols(
                 dict_path=new_path,
                 cd=cd,
                 agg_cache=agg_cache,
-                verbose=verbose
+                verbose=verbose,
             )
+
+
+def parse_regression_formula(formula: str) -> Tuple[List[str], List[str]]:
+    """
+    Return (lhs_list, rhs_list) for `formula`.
+
+    Rules
+    -----
+    • Each list contains the **unique raw variable names** appearing on
+      that side, sorted.
+    • `- 1` (intercept-removal) is ignored.
+    • `I(...)` blocks are unwrapped; products like `I(poa * t_amb)` are
+      split into their component symbols (`poa`, `t_amb`).
+
+    Parameters
+    ----------
+    formula : str
+        Regression formula to parse.
+
+    Returns
+    -------
+    Tuple[List[str], List[str]]
+        Tuple of (lhs_list, rhs_list).
+    """
+    # --- helpers ------------------------------------------------------
+    _sym_re = re.compile(r"[A-Za-z_]\w*")
+
+    def _extract_raw_names(factor_str: str) -> List[str]:
+        """
+        Turn 'I(poa * t_amb)'  ->  ['poa', 't_amb']
+             'poa'             ->  ['poa']
+        """
+        # strip outer I(…)
+        if factor_str.startswith("I(") and factor_str.endswith(")"):
+            factor_str = factor_str[2:-1]
+        # split by * or :  (products/interactions)
+        parts = re.split(r"[\*\:]", factor_str)
+        names = []
+        for part in parts:
+            # pull out identifier tokens
+            names.extend(_sym_re.findall(part))
+        return names
+
+    # --- main logic ---------------------------------------------------
+    md = ModelDesc.from_formula(formula)
+
+    lhs_list: List[str] = []
+    rhs_list: List[str] = []
+
+    # left
+    for term in md.lhs_termlist:
+        for f in term.factors:
+            for name in _extract_raw_names(f.name()):
+                if name not in lhs_list:
+                    lhs_list.append(name)
+
+    # right
+    for term in md.rhs_termlist:
+        for f in term.factors:
+            for name in _extract_raw_names(f.name()):
+                if name not in rhs_list:
+                    rhs_list.append(name)
+
+    # discard the Patsy-built-in intercept symbol if present
+    rhs_list = [n for n in rhs_list if n != "Intercept"]
+
+    return lhs_list, rhs_list
