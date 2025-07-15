@@ -15,7 +15,7 @@ class TestTempCorrectPower:
         assert isinstance(power_tc, pd.Series)
         captured = capsys.readouterr()
         assert captured.out.rstrip("\n") == (
-            'Calculating and adding "temp_correct_power" column as '
+            'Calculating and adding "power_temp_correct" column as '
             "(power_col) / (1 + ((-0.37 / 100) * (cell_temp_col - 25)))"
         )
 

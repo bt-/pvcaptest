@@ -51,7 +51,7 @@ def power_temp_correct(
     """
     if verbose:
         print(
-            'Calculating and adding "temp_correct_power" column as '
+            f'Calculating and adding "{power_temp_correct.__name__}" column as '
             f"({power}) / (1 + (({power_temp_coeff} / 100) * "
             f"({cell_temp} - {base_temp})))"
         )
@@ -103,7 +103,7 @@ def bom_temp(
     b = EMP_HEAT_COEFF[racking][module_type]["b"]
     if verbose:
         print(
-            'Calculating and adding "bom_temp" column as '
+            f'Calculating and adding "{bom_temp.__name__}" column as '
             f"{poa} * e^({a} + {b} * {wind_speed}) + {temp_amb}. "
             f'Coefficients a and b assume "{module_type}" modules and "{racking}" racking.'
         )
@@ -147,7 +147,7 @@ def cell_temp(
     """
     if verbose:
         print(
-            'Calculating and adding "cell_temp" column using the Sandia temperature '
+            f'Calculating and adding "{cell_temp.__name__}" column using the Sandia temperature '
             f'model assuming "{module_type}" module type and "{racking}" racking '
             f'from the "{bom}" and "{poa}" columns.'
         )
@@ -201,7 +201,7 @@ def rpoa_pvsyst(data, globbak="GlobBak", backshd="BackShd", verbose=True):
     """
     if verbose:
         print(
-            'Calculating and adding "rpoa_pvsyst" column as ' f"{globbak} + {backshd}. "
+            f'Calculating and adding "{rpoa_pvsyst.__name__}" column as ' f"{globbak} + {backshd}. "
         )
     return data[globbak] + data[backshd]
 
@@ -238,7 +238,7 @@ def e_total(
     """
     if verbose:
         print(
-            'Calculating and adding "e_total" column as '
+            f'Calculating and adding "{e_total.__name__}" column as '
             f"{poa} + {rpoa} * "
             f"{bifaciality} * {bifacial_frac} * "
             f"(1 - {rear_shade})"
