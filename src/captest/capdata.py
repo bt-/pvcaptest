@@ -2952,9 +2952,92 @@ class CapData(object):
         self,
         irr_bal=False,
         percent_filter=20,
+        front_poa='poa',
+        w_vel=None,
+        func='E2939',
+        rc_kwargs={},
+    ):
+        """
+        Calculate reporting conditons.
+
+        Parameters
+        ----------
+        irr_bal: boolean, default False
+            If true, uses the irr_rc_balanced function to determine the
+            reporting conditions. Replaces the calculations specified by func
+            with or without freq.
+        percent_filter : Int, default 20
+            Percentage as integer used to filter around reporting
+            irradiance in the irr_rc_balanced function.
+        front_poa : str, default 'poa'
+            Column name of front plane irradiance to use for reporting
+            conditions when `irr_bal` is True.
+        w_vel: int
+            If w_vel is not none, then wind reporting condition will be set to
+            value specified for predictions. Does not affect output unless pred
+            is True and irr_bal is True.
+        func: callable, string, dictionary, or list of string/callables, default E2939
+            Determines how the reporting condition is calculated.
+            Default is a dictionary which calculates the reporting conditions per
+            ASTM E2939. poa - 60th numpy_percentile, t_amb - mean, w_vel - mean
+            If right hand side of regression formula does not include 'poa', then
+            the the default is to calculate all reporting conditions as means.
+            Can pass a string function ('mean') to calculate each reporting
+            condition the same way.
+        rc_kwargs : dict
+            Passed to the irr_rc_balanced function if `irr_bal` is set to True.
+
+        Returns
+        -------
+        dict
+            Returns a dictionary of reporting conditions if inplace=False
+            otherwise returns None.
+        pandas DataFrame
+            If pred=True, then returns a pandas dataframe of results.
+        """
+        lhs, rhs = util.parse_regression_formula(self.regression_formula)
+        df = self.get_reg_cols(rhs)
+        # Set defaults for standard regression equation
+        if func == 'E2939':
+            if 'poa' in rhs:
+                func = {'poa': perc_wrap(60)}
+            if len(rhs) > 1:
+                for var in rhs:
+                    if var != 'poa':
+                        func[var] = 'mean'
+        else:
+            func = 'mean'
+        RCs_df = pd.DataFrame(df.agg(func)).T
+
+        if irr_bal:
+            if front_poa not in df.columns:
+                raise ValueError(f"{front_poa} not in regression formula.")
+            self.rc_tool = ReportingIrradiance(
+                df,
+                front_poa,
+                percent_band=percent_filter,
+                **rc_kwargs,
+            )
+            results = self.rc_tool.get_rep_irr()
+            flt_df = results[1]
+            RCs_df = pd.DataFrame(flt_df.agg(func)).T # use flt_df!
+            RCs_df.loc[0, front_poa] = results[0] # overwrite poa
+
+        if w_vel is not None:
+            RCs_df.loc[0, 'w_vel'] = w_vel
+
+        print('Reporting conditions saved to rc attribute.')
+        print(RCs_df)
+        self.rc = RCs_df
+
+    def rep_cond_freq(
+        self,
+        irr_bal=False,
+        percent_filter=20,
+        front_poa='poa',
         w_vel=None,
         inplace=True,
-        func={'poa': perc_wrap(60), 't_amb': 'mean', 'w_vel': 'mean'},
+        func='E2939',
         freq=None,
         grouper_kwargs={},
         rc_kwargs={}):
@@ -2970,10 +3053,15 @@ class CapData(object):
         percent_filter : Int, default 20
             Percentage as integer used to filter around reporting
             irradiance in the irr_rc_balanced function.
+        front_poa : str, default 'poa'
+            Column name of front plane irradiance to use for reporting
+            conditions when `irr_bal` is True.
         func: callable, string, dictionary, or list of string/callables
             Determines how the reporting condition is calculated.
             Default is a dictionary poa - 60th numpy_percentile, t_amb - mean
                                           w_vel - mean
+            If right hand side of regression formula does not include 'poa', then
+            the the default is to calculate all reporting conditions as means.
             Can pass a string function ('mean') to calculate each reporting
             condition the same way.
         freq: str
@@ -3002,30 +3090,36 @@ class CapData(object):
         pandas DataFrame
             If pred=True, then returns a pandas dataframe of results.
         """
-        df = self.floc[['poa', 't_amb', 'w_vel']]
-        df = df.rename(columns={df.columns[0]: 'poa',
-                                df.columns[1]: 't_amb',
-                                df.columns[2]: 'w_vel'})
-
+        lhs, rhs = util.parse_regression_formula(self.regression_formula)
+        df = self.get_reg_cols(rhs)
+        # Set defaults for standard regression equation
+        if func == 'E2939':
+            if 'poa' in rhs:
+                func = {'poa': perc_wrap(60)}
+            if len(rhs) > 1:
+                for var in rhs:
+                    if var != 'poa':
+                        func[var] = 'mean'
+        else:
+            func = 'mean'
         RCs_df = pd.DataFrame(df.agg(func)).T
 
         if irr_bal:
+            if front_poa not in df.columns:
+                raise ValueError(f"{front_poa} not in regression formula.")
             self.rc_tool = ReportingIrradiance(
                 df,
-                'poa',
+                front_poa,
                 percent_band=percent_filter,
                 **rc_kwargs,
             )
             results = self.rc_tool.get_rep_irr()
             flt_df = results[1]
-            temp_RC = flt_df['t_amb'].mean()
-            wind_RC = flt_df['w_vel'].mean()
-            RCs_df = pd.DataFrame({'poa': results[0],
-                                   't_amb': temp_RC,
-                                   'w_vel': wind_RC}, index=[0])
+            RCs_df = pd.DataFrame(flt_df.agg(func)).T # use flt_df!
+            RCs_df.loc[0, front_poa] = results[0] # overwrite poa
 
         if w_vel is not None:
-            RCs_df['w_vel'][0] = w_vel
+            RCs_df.loc[0, 'w_vel'] = w_vel
 
         if freq is not None:
             # wrap_seasons passes df through unchanged unless freq is one of
@@ -3036,24 +3130,34 @@ class CapData(object):
 
             if irr_bal:
                 ix = pd.DatetimeIndex(list(df_grpd.groups.keys()), freq=freq)
-                poa_RC = []
-                temp_RC = []
-                wind_RC = []
-                for name, month in df_grpd:
+                all_monthly_rcs = []
+                # for i, month in zip(ix, df_grpd):
+                for i, month in df_grpd:
+                    # print(type(name))
+                    # print(name)
+                    # print(type(month))
+                    # print(month)
+                    monthly_rc = pd.DataFrame(columns=rhs, index=[i])
                     self.rc_tool = ReportingIrradiance(
                         month,
-                        'poa',
+                        front_poa,
                         percent_band=percent_filter,
                         **rc_kwargs,
                     )
                     results = self.rc_tool.get_rep_irr()
-                    poa_RC.append(results[0])
+                    print(front_poa)
+                    print(monthly_rc)
+                    monthly_rc.loc[i, front_poa] = results[0]
                     flt_df = results[1]
-                    temp_RC.append(flt_df['t_amb'].mean())
-                    wind_RC.append(flt_df['w_vel'].mean())
-                RCs_df = pd.DataFrame({'poa': poa_RC,
-                                       't_amb': temp_RC,
-                                       'w_vel': wind_RC}, index=ix)
+                    print(flt_df)
+                    monthly_rc = pd.DataFrame(flt_df.agg(func)).T # use flt_df!
+                    for var in [var for var in rhs if var != front_poa]:
+                        print(var)
+                        print(monthly_rc)
+                        filtered_agg = flt_df[var].agg(func)
+                        print(filtered_agg)
+                        monthly_rc.loc[i, var] = filtered_agg
+                RCs_df = pd.concat(all_monthly_rcs)
             else:
                 RCs_df = df_grpd.agg(func)
 

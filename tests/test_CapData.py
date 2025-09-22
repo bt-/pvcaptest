@@ -1691,12 +1691,7 @@ class TestRepCondNoFreq():
         nrel.rep_cond(w_vel=50)
         assert nrel.rc['w_vel'][0] == 50
 
-    def test_defaults_not_inplace(self, nrel):
-        df = nrel.rep_cond(inplace=False)
-        assert nrel.rc is None
-        assert isinstance(df, pd.core.frame.DataFrame)
-
-    def test_irr_bal_inplace(self, nrel):
+    def test_irr_bal(self, nrel):
         nrel.filter_irr(0.1, 2000)
         meas2 = nrel.copy()
         meas2.rep_cond()
