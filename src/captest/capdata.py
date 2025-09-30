@@ -1631,7 +1631,7 @@ class CapData(object):
 
     def drop_cols(self, columns):
         """
-        Drop columns from CapData `data` and `column_groups`.
+        Drop columns from CapData `data`, `data_filtered`, and `column_groups`.
 
         Parameters
         ----------
@@ -1642,15 +1642,19 @@ class CapData(object):
         ----
         Change to accept a string column name or list of strings
         """
-        for key, value in self.column_groups.items():
-            for col in columns:
+        for col in columns:
+            print(f'Removing following column: {col}')
+            for key, value in self.column_groups.items():
                 try:
                     value.remove(col)
                     self.column_groups[key] = value
+                    print(f'    Dropped from column grouping')
                 except ValueError:
                     continue
-        self.data.drop(columns, axis=1, inplace=True)
-        self.data_filtered.drop(columns, axis=1, inplace=True)
+            self.data.drop(col, axis=1, inplace=True)
+            print(f'    Dropped from data attribute')
+            self.data_filtered.drop(col, axis=1, inplace=True)
+            print(f'    Dropped from data filtered attribute')
     
     def rename_cols(self, column_map):
         """
