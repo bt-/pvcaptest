@@ -215,6 +215,154 @@ def update_by_path(dictionary, path, new_value=None, convert_callable=False):
     return dictionary
 
 
+def _is_aggregation_tuple(node):
+    """Check if node is an aggregation tuple: (group_id: str, agg_func: str)."""
+    return (
+        isinstance(node, tuple)
+        and len(node) == 2
+        and isinstance(node[0], str)
+        and isinstance(node[1], str)
+    )
+
+
+def _is_calculation_tuple(node):
+    """Check if node is a calculation tuple: (callable, dict)."""
+    return (
+        isinstance(node, tuple)
+        and len(node) == 2
+        and callable(node[0])
+        and isinstance(node[1], dict)
+    )
+
+
+def _resolve_column_group(value, cd):
+    """
+    Resolve a column group ID to an actual column name.
+
+    Parameters
+    ----------
+    value : str
+        The column group ID or column name.
+    cd : CapData
+        CapData instance with column_groups attribute.
+
+    Returns
+    -------
+    str
+        The resolved column name.
+
+    Raises
+    ------
+    ValueError
+        If the column group has more than one column.
+    """
+    if value in cd.column_groups:
+        if len(cd.column_groups[value]) == 1:
+            return cd.column_groups[value][0]
+        else:
+            raise ValueError(
+                f'Looks like you specified a column group ID "{value}" that '
+                f"points to a group with more than one column. "
+                f'Try replacing it with ("{value}", "mean") or a different '
+                f"aggregation method."
+            )
+    return value
+
+
+def _get_or_create_aggregation(group_id, agg_func, cd, agg_cache, verbose):
+    """
+    Get an aggregated column name, creating it if necessary.
+
+    Parameters
+    ----------
+    group_id : str
+        The column group ID to aggregate.
+    agg_func : str
+        The aggregation function name.
+    cd : CapData
+        CapData instance.
+    agg_cache : dict
+        Cache of already aggregated columns.
+    verbose : bool
+        Whether to print verbose output.
+
+    Returns
+    -------
+    str
+        The aggregated column name.
+    """
+    cache_key = (group_id, agg_func)
+    if cache_key in agg_cache:
+        return agg_cache[cache_key]
+
+    expected_agg_name = get_agg_column_name(group_id, agg_func)
+    if expected_agg_name in cd.data.columns:
+        agg_name = expected_agg_name
+    else:
+        agg_name = cd.agg_group(group_id=group_id, agg_func=agg_func, verbose=verbose)
+
+    agg_cache[cache_key] = agg_name
+    return agg_name
+
+
+def transform_calc_params(node, cd, agg_cache=None, verbose=True):
+    """
+    Recursively transform a calc_params node, returning resolved values.
+
+    This function processes a nested dictionary structure that defines regression
+    parameters, executing aggregations and calculations as needed, and returns
+    a flattened structure with resolved column names.
+
+    Node types handled:
+    - dict: Transform each value recursively
+    - tuple (str, str): Aggregation - returns aggregated column name
+    - tuple (callable, dict): Calculation - executes function, returns function name
+    - str: Column group ID - resolved to column name if single column
+    - other: Passed through unchanged (e.g., numeric values)
+
+    Parameters
+    ----------
+    node : dict, tuple, str, or other
+        The current node in the calc_params structure.
+    cd : CapData
+        CapData instance that functions will act on.
+    agg_cache : dict, optional
+        Cache of already aggregated column groups to avoid redundant calls.
+        Keys are tuples of (group_id, agg_func), values are aggregated column names.
+    verbose : bool, default True
+        Passed to aggregations and calculations. Set to False to suppress output.
+
+    Returns
+    -------
+    transformed
+        The transformed node with all aggregations executed and calculations
+        replaced by their function names.
+    """
+    if agg_cache is None:
+        agg_cache = {}
+
+    if isinstance(node, dict):
+        return {
+            key: transform_calc_params(value, cd, agg_cache, verbose)
+            for key, value in node.items()
+        }
+
+    if _is_aggregation_tuple(node):
+        group_id, agg_func = node
+        return _get_or_create_aggregation(group_id, agg_func, cd, agg_cache, verbose)
+
+    if _is_calculation_tuple(node):
+        func, kwargs = node
+        resolved_kwargs = transform_calc_params(kwargs, cd, agg_cache, verbose)
+        cd.custom_param(func, **resolved_kwargs, verbose=verbose)
+        return func.__name__
+
+    if isinstance(node, str):
+        return _resolve_column_group(node, cd)
+
+    return node
+
+
 def process_reg_cols(
     original_calc_params,
     calc_params=None,
@@ -274,11 +422,11 @@ def process_reg_cols(
     original_calc_params : dict
         The original dictionary to be modified
     calc_params : dict or tuple
-        The current level of the dictionary being processed
+        Deprecated. Ignored if provided.
     key_id : str
-        The key ID of the current level
+        Deprecated. Ignored if provided.
     dict_path : list
-        The path to the current level in the dictionary
+        Deprecated. Ignored if provided.
     cd : CapData
         CapData instance that functions in original_calc_params will act on.
     agg_cache : dict, optional
@@ -294,126 +442,13 @@ def process_reg_cols(
         Modifies the original_calc_params and the data attribute of the CapData object
         passed to the `cd` argument.
     """
-    if calc_params is None:
-        calc_params = original_calc_params
-
-    if dict_path is None:
-        dict_path = []
-
     if agg_cache is None:
         agg_cache = {}
 
-    if isinstance(calc_params, dict):
-        for calc_param_id, calc_inputs in calc_params.items():
-            if isinstance(calc_inputs, tuple):
-                new_path = dict_path + [calc_param_id]
-                process_reg_cols(
-                    original_calc_params,
-                    calc_inputs,
-                    key_id=calc_param_id,
-                    dict_path=new_path,
-                    cd=cd,
-                    agg_cache=agg_cache,
-                    verbose=verbose,
-                )
-            elif (calc_inputs in cd.column_groups) and (
-                len(cd.column_groups[calc_inputs]) == 1
-            ):
-                dp_temp = copy.copy(dict_path)
-                dp_temp.extend([calc_param_id])
-                update_by_path(
-                    original_calc_params, dp_temp, cd.column_groups[calc_inputs][0]
-                )
-            elif (calc_inputs in cd.column_groups) and (
-                len(cd.column_groups[calc_inputs]) > 1
-            ):
-                raise ValueError(
-                    f'Looks like you specified a column group ID "{calc_inputs}" that '
-                    f"points to a group with more than one column. "
-                    f'Try replacing it with ("{calc_inputs}", "mean") or a different '
-                    f"aggregation method."
-                )
-    elif isinstance(calc_params, tuple):
-        func = calc_params[0]
-        if isinstance(calc_params[0], str) and isinstance(calc_params[1], str):
-            # Check if this group_id and agg_func combination has already been aggregated
-            cache_key = (calc_params[0], calc_params[1])
-            if cache_key in agg_cache:
-                agg_name = agg_cache[cache_key]
-            else:
-                # Check if the aggregated column already exists in the data
-                expected_agg_name = get_agg_column_name(calc_params[0], calc_params[1])
-                if expected_agg_name in cd.data.columns:
-                    agg_name = expected_agg_name
-                else:
-                    agg_name = cd.agg_group(
-                        group_id=calc_params[0],
-                        agg_func=calc_params[1],
-                        verbose=verbose,
-                    )
-                # Store in cache for future use
-                agg_cache[cache_key] = agg_name
+    result = transform_calc_params(original_calc_params, cd, agg_cache, verbose)
 
-            update_by_path(original_calc_params, dict_path, agg_name)
-            process_reg_cols(
-                original_calc_params, cd=cd, agg_cache=agg_cache, verbose=verbose
-            )
-        if isinstance(calc_params[1], dict):
-            if all(
-                [
-                    isinstance(values, str) or isinstance(values, (float, int))
-                    for values in calc_params[1].values()
-                ]
-            ):
-                # Check if any values are column group IDs pointing to groups with only
-                # one column
-                # If so, replace them with the actual column name
-                updated_params = {}
-                for key, value in calc_params[1].items():
-                    if value in cd.column_groups and len(cd.column_groups[value]) == 1:
-                        # Replace column group ID with the actual column name
-                        updated_params[key] = cd.column_groups[value][0]
-                    elif value in cd.column_groups and len(cd.column_groups[value]) > 1:
-                        raise ValueError(
-                            f'Looks like you specified a column group ID "{value}" that '
-                            f"points to a group with more than one column. "
-                            f'Try replacing it with ("{value}", "mean") or a different '
-                            f"aggregation method."
-                        )
-                    else:
-                        updated_params[key] = value
-                # Call the function and pass kwargs
-                # func here is or should be similar to calcparams functions
-                cd.custom_param(func, **updated_params, verbose=verbose)
-                # Update the original calc_params dictionary at the current path
-                update_by_path(original_calc_params, dict_path, func.__name__)
-                # Recursive call to reprocess again with the modified reg_cols dict
-                # Effect is to process the next layer up in the dict
-                process_reg_cols(
-                    original_calc_params, cd=cd, agg_cache=agg_cache, verbose=verbose
-                )
-            else:
-                new_path = dict_path + [1]
-                process_reg_cols(
-                    original_calc_params,
-                    calc_params[1],
-                    key_id=key_id,
-                    dict_path=new_path,
-                    cd=cd,
-                    agg_cache=agg_cache,
-                    verbose=verbose,
-                )
-        elif isinstance(calc_params[1], tuple):
-            new_path = dict_path + [1]
-            process_reg_cols(
-                original_calc_params,
-                calc_params[1],
-                key_id=key_id,
-                dict_path=new_path,
-                cd=cd,
-                agg_cache=agg_cache,
-                verbose=verbose,
-            )
+    original_calc_params.clear()
+    original_calc_params.update(result)
 
 
 def parse_regression_formula(formula: str) -> Tuple[List[str], List[str]]:
