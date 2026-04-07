@@ -1592,7 +1592,7 @@ class TestAggSensors:
         meas_groups_with_one_tag.agg_sensors(
             agg_map={"irr_poa_pyran": "mean", "irr_ghi_pyran": "mean"}
         )
-        assert not hasattr(meas_groups_with_one_tag, "agg")
+        assert "agg" not in meas_groups_with_one_tag.column_groups
 
     def test_agg_map_none(self, meas):
         """Test default behaviour when no agg_map is passed."""
@@ -1633,7 +1633,7 @@ class TestAggSensors:
         orig_df = meas.data.copy()
 
         meas.agg_sensors()
-        meas.filter_irr(200, 500)
+        meas.filter_irr(200, 500, col_name="irr_poa_pyran_mean_agg")
         meas.reset_agg()
 
         # Dataframe should be the same as before aggregation
@@ -2993,9 +2993,13 @@ class TestScatterHv:
 
     def test_no_index_str_column_in_data(self, meas):
         "Check that plot function works when there is no index column in the data."
-        meas.agg_sensors(
-            agg_map={"irr_poa_pyran": "mean", "temp_amb": "mean", "wind": "mean"}
-        )
+        meas.regression_cols = {
+            "power": "meter_power",
+            "poa": ("irr_poa_pyran", "mean"),
+            "t_amb": ("temp_amb", "mean"),
+            "w_vel": ("wind", "mean"),
+        }
+        meas.process_regression_columns()
         assert "index" not in meas.data.columns
         plot = meas.scatter_hv()
         assert isinstance(plot, hv.element.chart.Scatter)
@@ -3004,9 +3008,13 @@ class TestScatterHv:
         """Test that the curve_timeseries method works. Shouldn't require `data` index
         to have a specific name.
         """
-        meas.agg_sensors(
-            agg_map={"irr_poa_pyran": "mean", "temp_amb": "mean", "wind": "mean"}
-        )
+        meas.regression_cols = {
+            "power": "meter_power",
+            "poa": ("irr_poa_pyran", "mean"),
+            "t_amb": ("temp_amb", "mean"),
+            "w_vel": ("wind", "mean"),
+        }
+        meas.process_regression_columns()
         assert "index" not in meas.data.columns
         assert meas.data.index.name is None
         plot = meas.scatter_hv(timeseries=True)
@@ -3021,9 +3029,13 @@ class TestScatterFilters:
         Test that the scatter_filters method of the CapData class returns a
         holoviews overlay object.
         """
-        meas.agg_sensors(
-            agg_map={"irr_poa_pyran": "mean", "temp_amb": "mean", "wind": "mean"}
-        )
+        meas.regression_cols = {
+            "power": "meter_power",
+            "poa": ("irr_poa_pyran", "mean"),
+            "t_amb": ("temp_amb", "mean"),
+            "w_vel": ("wind", "mean"),
+        }
+        meas.process_regression_columns()
         meas.filter_irr(200, 900)
         meas.filter_irr(400, 800)
         overlay = meas.scatter_filters()
@@ -3040,9 +3052,13 @@ class TestTimeseriesFilters:
         Test that the timeseries_filters method of the CapData class returns a
         holoviews overlay object.
         """
-        meas.agg_sensors(
-            agg_map={"irr_poa_pyran": "mean", "temp_amb": "mean", "wind": "mean"}
-        )
+        meas.regression_cols = {
+            "power": "meter_power",
+            "poa": ("irr_poa_pyran", "mean"),
+            "t_amb": ("temp_amb", "mean"),
+            "w_vel": ("wind", "mean"),
+        }
+        meas.process_regression_columns()
         meas.filter_irr(200, 900)
         meas.filter_irr(400, 800)
         overlay = meas.timeseries_filters()

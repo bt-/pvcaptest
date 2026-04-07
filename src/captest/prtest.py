@@ -1,5 +1,6 @@
 import warnings
 
+import numpy as np
 import pandas as pd
 import param
 
@@ -195,12 +196,14 @@ def perf_ratio_temp_corr_nrel(
     timestep = util.get_common_timestep(poa, units="h", string_output=False)
     timestep_str = util.get_common_timestep(poa, units="h", string_output=True)
 
-    temp_bom = calcparams.back_of_module_temp(
-        poa, temp_amb, wind_speed, module_type, racking
-    )
-    temp_cell = calcparams.cell_temp(temp_bom, poa, module_type, racking)
-    dc_nameplate_temp_corr = calcparams.temp_correct_power(
-        dc_nameplate, power_temp_coeff, temp_cell, base_temp=base_temp
+    coeffs = calcparams.EMP_HEAT_COEFF[racking][module_type]
+    if temp_bom is None:
+        temp_bom = poa * np.exp(coeffs["a"] + coeffs["b"] * wind_speed) + temp_amb
+    temp_cell = temp_bom + (poa / 1000) * coeffs["del_tcnd"]
+    if single_irr_weighted_temp:
+        temp_cell = (poa * temp_cell).sum() / poa.sum()
+    dc_nameplate_temp_corr = dc_nameplate / (
+        1 + ((power_temp_coeff / 100) * (temp_cell - base_temp))
     )
     # below is same as the perf_ratio function
     # move to a separate function?

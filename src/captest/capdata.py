@@ -1756,13 +1756,11 @@ class CapData(object):
 
         Parameters
         ----------
-        Columns : list
-            List of columns to drop.
-
-        Todo
-        ----
-        Change to accept a string column name or list of strings
+        columns : str or list
+            Column name or list of column names to drop.
         """
+        if isinstance(columns, str):
+            columns = [columns]
         for col in columns:
             print(f"Removing following column: {col}")
             for key, value in self.column_groups.items():
