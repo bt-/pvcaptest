@@ -26,6 +26,26 @@ def meas():
 
 
 @pytest.fixture
+def meas_groups_with_one_tag():
+    """Create an instance of CapData with example data loaded."""
+    meas = pvc.CapData("meas")
+    meas.data = pd.read_csv(
+        "./tests/data/example_measured_data.csv",
+        index_col=0,
+        parse_dates=True,
+    )
+    meas.data_filtered = meas.data.copy(deep=True)
+    meas.column_groups = cg.ColumnGroups(
+        util.read_json("./tests/data/example_measured_data_column_groups.json")
+    )
+    meas.set_regression_cols(
+        power="meter_power", poa="irr_poa_pyran", t_amb="temp_amb", w_vel="wind"
+    )
+    meas.drop_cols(["met2_ghi_pyranometer", "met2_poa_pyranometer"])
+    return meas
+
+
+@pytest.fixture
 def location_and_system():
     """Create a dictionary with a nested dictionary for location and system."""
     loc_sys = {

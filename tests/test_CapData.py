@@ -19,6 +19,7 @@ from captest import columngroups as cg
 from captest import io
 from captest import (
     load_pvsyst,
+    calcparams,
 )
 
 data = np.arange(0, 1300, 54.167)
@@ -631,13 +632,13 @@ class TestIndexCapdata:
         Test that passing the label `regcols` returns the columns of
         Capdata.data_filtered that are identified in `regression_cols`.
         """
-        meas.agg_sensors(
-            agg_map={
-                "irr_poa_pyran": "mean",
-                "temp_amb": "mean",
-                "wind": "mean",
-            }
-        )
+        meas.regression_cols = {
+            "power": "meter_power",
+            "poa": ("irr_poa_pyran", "mean"),
+            "temp_amb": ("temp_amb", "mean"),
+            "wind": ("wind", "mean"),
+        }
+        meas.process_regression_columns()
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         out = pvc.index_capdata(meas, "regcols", filtered=True)
         assert isinstance(out, pd.DataFrame)
@@ -683,7 +684,8 @@ class TestIndexCapdata:
         to map to the new aggregated column."""
         # filter data_filtered to make check of row count for filtered=False meaningful
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
-        meas.agg_sensors(agg_map={"irr_poa_pyran": "mean"})
+        meas.regression_cols = {"poa": ("irr_poa_pyran", "mean")}
+        meas.process_regression_columns()
         out = pvc.index_capdata(meas, "poa", filtered=False)
         assert isinstance(out, pd.DataFrame)
         assert out.equals(meas.data["irr_poa_pyran_mean_agg"].to_frame())
@@ -748,7 +750,11 @@ class TestIndexCapdata:
         """
         # filter data_filtered to make check of row count for filtered=False meaningful
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
-        meas.agg_sensors(agg_map={"irr_poa_pyran": "mean", "temp_amb": "mean"})
+        meas.regression_cols = {
+            "poa": ("irr_poa_pyran", "mean"),
+            "t_amb": ("temp_amb", "mean"),
+        }
+        meas.process_regression_columns()
         out = pvc.index_capdata(meas, ["poa", "t_amb"], filtered=False)
         assert isinstance(out, pd.DataFrame)
         assert out.equals(
@@ -769,6 +775,7 @@ class TestIndexCapdata:
         # filter data_filtered to make check of row count for filtered=False meaningful
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         meas.agg_sensors(agg_map={"irr_poa_pyran": "mean"})
+        meas.regression_cols = {"poa": "irr_poa_pyran_mean_agg", "t_amb": "temp_amb"}
         out = pvc.index_capdata(meas, ["poa", "t_amb"], filtered=False)
         assert isinstance(out, pd.DataFrame)
         assert out.equals(
@@ -873,13 +880,13 @@ class TestIndexCapdata:
         Test that passing the label `regcols` returns the columns of
         Capdata that are identified in `regression_cols`.
         """
-        meas.agg_sensors(
-            agg_map={
-                "irr_poa_pyran": "mean",
-                "temp_amb": "mean",
-                "wind": "mean",
-            }
-        )
+        meas.regression_cols = {
+            "power": "meter_power",
+            "poa": ("irr_poa_pyran", "mean"),
+            "temp_amb": ("temp_amb", "mean"),
+            "wind": ("wind", "mean"),
+        }
+        meas.process_regression_columns()
         meas.data_filtered = meas.data.iloc[0:10, :].copy()
         out = pvc.index_capdata(meas, "regcols", filtered=False)
         assert isinstance(out, pd.DataFrame)
@@ -922,9 +929,8 @@ class TestIrrRcBalanced:
     def test_check_csv_output_exists(self, meas, tmp_path):
         """Check that function outputs a csv file when given a file path."""
         f = tmp_path / "output.csv"
-        print(meas.column_groups)
-        meas.agg_sensors(agg_map={"irr_poa_pyran": "mean"})
-        print(meas.regression_cols["poa"])
+        meas.regression_cols = {"poa": ("irr_poa_pyran", "mean")}
+        meas.process_regression_columns()
         rep_irr = pvc.ReportingIrradiance(
             df=meas.data,
             irr_col=meas.regression_cols["poa"],
@@ -1478,7 +1484,13 @@ class TestGetRegCols:
             meas.get_reg_cols()
 
     def test_all_coeffs(self, meas):
-        meas.agg_sensors()
+        meas.regression_cols = {
+            "power": "meter_power",
+            "poa": ("irr_poa_pyran", "mean"),
+            "t_amb": ("temp_amb", "mean"),
+            "w_vel": ("wind", "mean"),
+        }
+        meas.process_regression_columns()
         cols = ["power", "poa", "t_amb", "w_vel"]
         df = meas.get_reg_cols()
         assert len(df.columns) == 4
@@ -1493,12 +1505,16 @@ class TestGetRegCols:
         Test when agg_sensors resets regression_cols values to a mix of trans keys
         and column names.
         """
+        meas.regression_cols = {
+            "power": "meter_power",
+            "poa": ("irr_poa_pyran", "mean"),
+            "t_amb": ("temp_amb", "mean"),
+            "w_vel": ("wind", "mean"),
+        }
+        meas.process_regression_columns()
         meas.agg_sensors(
             agg_map={
                 "power_inv": "sum",
-                "irr_poa_pyran": "mean",
-                "temp_amb": "mean",
-                "wind": "mean",
             }
         )
         cols = ["poa", "power"]
@@ -1556,7 +1572,7 @@ class TestExpandAggMap:
 
 class TestAggSensors:
     def test_agg_group(self, meas):
-        agg_result, col_name = meas.agg_group("irr_poa_pyran", "mean")
+        agg_result, col_name = meas.agg_group("irr_poa_pyran", "mean", inplace=False)
         assert "irr_poa_pyran_mean_agg" == col_name
         assert isinstance(agg_result, pd.DataFrame)
         exp_mean = (
@@ -1567,6 +1583,16 @@ class TestAggSensors:
         )
         assert exp_mean.shape == agg_result.shape
         assert exp_mean.equals(agg_result)
+
+    def test_agg_group_groups_with_one_tag(self, meas_groups_with_one_tag):
+        """
+        Test when all groups passed in the agg_map only have one tag, so no
+        aggregation occurs.
+        """
+        meas_groups_with_one_tag.agg_sensors(
+            agg_map={"irr_poa_pyran": "mean", "irr_ghi_pyran": "mean"}
+        )
+        assert not hasattr(meas_groups_with_one_tag, "agg")
 
     def test_agg_map_none(self, meas):
         """Test default behaviour when no agg_map is passed."""
@@ -1595,18 +1621,6 @@ class TestAggSensors:
         assert meas.data_filtered.shape[0] == meas.data.shape[0]
         # Check for poa aggregation column
         assert "irr_poa_pyran_mean_agg" in meas.data_filtered.columns
-        assert meas.regression_cols["poa"] == "irr_poa_pyran_mean_agg"
-
-    def test_agg_map_update_regression_cols(self, meas):
-        meas.agg_sensors()
-        # Regression column for power should not be updated because there is only
-        # one power column.
-        assert meas.regression_cols["power"] == "meter_power"
-        # Regression columns for poa, amb temp, and wind should be updated to
-        # the aggregated columns from the column group ids.
-        assert meas.regression_cols["poa"] == "irr_poa_pyran_mean_agg"
-        assert meas.regression_cols["t_amb"] == "temp_amb_mean_agg"
-        assert meas.regression_cols["w_vel"] == "wind_mean_agg"
 
     def test_reset_summary(self, meas):
         meas.agg_sensors()
@@ -1646,15 +1660,6 @@ class TestAggSensors:
             ),
         ):
             meas.agg_sensors()
-
-    def test_regression_columns_not_in_column_groups(self, meas):
-        """Sould be able to aggregate columns if the regression columns includes
-        a column that is not in the column_groups attribute.
-        """
-        meas.data["irr_poa_total"] = meas.data.loc[:, "met1_poa_pyranometer"]
-        meas.regression_cols["poa"] = "irr_poa_total"
-        meas.agg_sensors(agg_map={"temp_amb": "mean"})
-        assert meas.regression_cols["t_amb"] == "temp_amb_mean_agg"
 
     def test_pre_agg_regression_dict_exists(self, meas):
         meas.agg_sensors()
@@ -1778,9 +1783,6 @@ class TestAggSensors:
         for agg_col in expected_columns:
             assert agg_col in cd.data.columns
 
-        # Check regression column mapping
-        assert cd.regression_cols["poa"] == "irr_poa_mean_agg"
-
         # Check that average of subgroup averages is as expected
         expected_mean = (
             cd.data["irr_poa_met1_mean_agg"] + cd.data["irr_poa_met2_mean_agg"]
@@ -1802,6 +1804,24 @@ class TestAggSensors:
         for agg_col in expected_columns:
             assert hasattr(cd, "aggs_" + agg_col)
             assert getattr(cd, "aggs_" + agg_col).equals(cd.data[agg_col].to_frame())
+
+    def test_no_duplicating_agg_column(self, meas):
+        """Test that agg_sensors does not create duplicate aggregation columns
+        in CapData.data. Aggregation columns may already exist if
+        process_regression_columns was run first.
+        """
+        meas.data["irr_poa_pyran_mean_agg"] = meas.data[
+            [
+                "met1_poa_pyranometer",
+                "met2_poa_pyranometer",
+            ]
+        ].mean(axis=1)
+        meas.column_groups["agg"] = ["irr_poa_pyran_mean_agg"]
+        meas.agg_sensors(agg_map={"irr_poa_pyran": "mean"})
+        assert "irr_poa_pyran_mean_agg" in meas.data.columns
+        # Should be one column which will return a series not a DataFrame
+        assert len(set(meas.data.columns)) == len(meas.data.columns)
+        assert isinstance(meas.data["irr_poa_pyran_mean_agg"], pd.Series)
 
 
 class TestFilterSensors:
@@ -2903,7 +2923,6 @@ class TestPointsSummary:
             "sufficient points have been collected. 150.0 points required; "
             "1440 points collected\n"
         )
-
         assert results_str == captured.out
 
     def test_print_points_summary_fail(self, meas):
@@ -3111,6 +3130,98 @@ class TestCreateColumnGroupAttributes:
 
             # Check that the attribute returns the correct data
             pd.testing.assert_frame_equal(attr_data, expected_data)
+
+
+class TestProcessRegressionColumns:
+    def test_e_total_reg_cols(self, meas):
+        meas.regression_cols = {
+            "e_total": (
+                calcparams.e_total,
+                {
+                    "poa": ("irr_poa_pyran", "mean"),
+                    "rpoa": ("irr_poa_pyran", "mean"),
+                },
+            )
+        }
+        meas.process_regression_columns()
+        assert "e_total" in meas.data.columns
+        assert "e_total" in meas.data_filtered.columns
+        assert meas.regression_cols == {"e_total": "e_total"}
+
+    def test_agg_amb_temp(self, meas):
+        meas.regression_cols = {"temp_amb": ("temp_amb", "mean")}
+        meas.process_regression_columns()
+        assert "temp_amb_mean_agg" in meas.data.columns
+        assert "temp_amb_mean_agg" in meas.data_filtered.columns
+        assert meas.regression_cols == {"temp_amb": "temp_amb_mean_agg"}
+
+    def test_power_tc_from_amb_temp(self, meas):
+        meas.power_temp_coeff = -0.32
+        meas.regression_cols = {
+            "power_tc": (
+                calcparams.power_temp_correct,
+                {
+                    "power": "meter_power",
+                    "cell_temp": (
+                        calcparams.cell_temp,
+                        {
+                            "bom": (
+                                calcparams.bom_temp,
+                                {
+                                    "poa": ("irr_poa_pyran", "mean"),
+                                    "temp_amb": ("temp_amb", "mean"),
+                                    "wind_speed": ("wind", "mean"),
+                                },
+                            ),
+                            "poa": ("irr_poa_pyran", "mean"),
+                        },
+                    ),
+                },
+            )
+        }
+        meas.process_regression_columns()
+        assert "power_temp_correct" in meas.data.columns
+        assert "power_temp_correct" in meas.data_filtered.columns
+        assert meas.regression_cols == {"power_tc": "power_temp_correct"}
+
+    def test_col_grp_id_conflict(self, meas):
+        """Expect ValueError when a kwarg name conflicts with a column-group ID.
+
+        Ommitted the temp_amb kwarg to calcparams.bom_temp here, which is the
+        overlapping kwarg and column group id. The column grouping used in this
+        test does not include a 'wind_speed' group, it is just 'wind'.
+        """
+        meas.regression_cols = {
+            "bom": (
+                calcparams.bom_temp,
+                {
+                    "poa": ("irr_poa_pyran", "mean"),
+                    "wind_speed": ("wind", "mean"),
+                },
+            )
+        }
+        with pytest.raises(
+            ValueError,
+            match=r"kwarg temp_amb.*bom_temp.*column groups id.*Change the name of.*",
+        ):
+            meas.process_regression_columns()
+
+    def test_pass_kwarg_value_in_regression_columns(self, meas):
+        """Check that a kwarg for a calcparams function passes through correctly"""
+        meas.regression_cols = {
+            "power_tc": (
+                calcparams.power_temp_correct,
+                {
+                    "power": "meter_power",
+                    "cell_temp": ("temp_amb", "mean"),
+                    "power_temp_coeff": -0.38,
+                },
+            )
+        }
+        meas.process_regression_columns()
+        assert "power_temp_correct" in meas.data.columns
+        assert "power_temp_correct" in meas.data_filtered.columns
+        assert meas.regression_cols == {"power_tc": "power_temp_correct"}
 
 
 if __name__ == "__main__":

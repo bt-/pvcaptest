@@ -16,6 +16,7 @@ from functools import wraps
 from itertools import combinations
 import warnings
 import importlib
+import inspect
 
 # anaconda distribution defaults
 import numpy as np
@@ -1686,16 +1687,17 @@ class CapData(object):
         that when called returns a view of the data for that column group using
         the loc indexer functionality.
         """
-        for grp_id in self.column_groups["agg"]:
+        if "agg" in self.column_groups:
+            for grp_id in self.column_groups["agg"]:
 
-            def make_getter(key):
-                def getter(self):
-                    return self.loc[key]
+                def make_getter(key):
+                    def getter(self):
+                        return self.loc[key]
 
-                return getter
+                    return getter
 
-            # Create the property and set it on the instance
-            setattr(self.__class__, "aggs_" + grp_id, property(make_getter(grp_id)))
+                # Create the property and set it on the instance
+                setattr(self.__class__, "aggs_" + grp_id, property(make_getter(grp_id)))
 
     def set_regression_cols(self, power="", poa="", t_amb="", w_vel=""):
         """
@@ -2179,7 +2181,9 @@ class CapData(object):
         else:
             return poa_cols[0]
 
-    def agg_group(self, group_id, agg_func, verbose=True, rename_map=None):
+    def agg_group(
+        self, group_id, agg_func, verbose=True, rename_map=None, inplace=True
+    ):
         """
         Aggregate columns in a group.
 
@@ -2196,10 +2200,8 @@ class CapData(object):
         """
         columns_to_aggregate = self.loc[group_id]
         agg_result = columns_to_aggregate.agg(agg_func, axis=1)
-        if isinstance(agg_func, str):
-            col_name = group_id + "_" + agg_func + "_agg"
-        else:
-            col_name = group_id + "_" + agg_func.__name__ + "_agg"
+        col_name = util.get_agg_column_name(group_id, agg_func)
+        self.column_groups.setdefault("agg", []).append(col_name)
         agg_result = agg_result.rename(col_name).to_frame()
         if verbose:
             col_name_to_print = copy.copy(col_name)
@@ -2215,7 +2217,11 @@ class CapData(object):
                     print("    " + col)
             elif len(columns_to_aggregate.columns) > 10:
                 print("   Aggregating all columns of the {} group".format(group_id))
-        return (agg_result, col_name)
+        if inplace:
+            self.data[col_name] = agg_result
+            return col_name
+        else:
+            return (agg_result, col_name)
 
     def expand_agg_map(self, agg_map):
         """
@@ -2354,51 +2360,31 @@ class CapData(object):
             }
 
         agg_names = {}
-        # print('Original agg map')
-        # print(agg_map)
         agg_map, rename_map, subgroup_rename_map = self.expand_agg_map(agg_map)
-        # print('Expanded agg map')
-        # print(agg_map)
-        # print('Subgroup rename map')
-        # print(subgroup_rename_map)
         for group_id, agg_func in agg_map.items():
+            col_name = util.get_agg_column_name(group_id, agg_func)
+            if col_name in self.data.columns:
+                if verbose:
+                    print(
+                        "Skipping aggregation of {} as column {} already exists".format(
+                            group_id, col_name
+                        )
+                    )
+                continue
             if self.loc[group_id].shape[1] == 1:
                 continue
             agg_result, col_name = self.agg_group(
-                group_id, agg_func, verbose=verbose, rename_map=rename_map
+                group_id,
+                agg_func,
+                verbose=verbose,
+                rename_map=rename_map,
+                inplace=False,
             )
             self.data = pd.concat([agg_result, self.data], axis=1)
             agg_names[group_id] = col_name
         self.data_filtered = self.data.copy()
-
-        # print('Agg names')
-        # print(agg_names)
-        # print('Renamer')
-        # print(rename_map)
         self.rename_cols(rename_map)
-        # update regression_cols attribute
-        for reg_var, trans_group in self.regression_cols.items():
-            if self.loc[reg_var].shape[1] == 1:
-                continue
-            elif trans_group in agg_names.keys():
-                print(
-                    "Regression variable '{}' has been remapped: '{}' to '{}'".format(
-                        reg_var, trans_group, agg_names[trans_group]
-                    )
-                )
-                self.regression_cols[reg_var] = agg_names[trans_group]
-            elif trans_group in subgroup_rename_map.keys():
-                print(
-                    "Regression variable '{}' has been remapped: '{}' to '{}".format(
-                        reg_var, trans_group, subgroup_rename_map[trans_group]
-                    )
-                )
-                self.regression_cols[reg_var] = subgroup_rename_map[trans_group]
-        # update column_groups attribute
-        self.column_groups["agg"] = [
-            rename_map[name] if name in rename_map.keys() else name
-            for name in agg_names.values()
-        ]
+        self.agg_name_mapper = agg_names
         self.create_column_group_attributes()
         self.create_agg_attributes()
 
@@ -3603,6 +3589,74 @@ class CapData(object):
         pd.DataFrame.from_dict(
             self.column_groups.data, orient="index"
         ).stack().to_frame().droplevel(1).to_excel(save_to, header=False)
+
+    def process_regression_columns(self, verbose=True):
+        """
+        Walk the regression column dictionary and calculate parameters.
+
+        See util.process_reg_cols for additional documentation.
+
+        Parameters
+        ----------
+        verbose : bool, default True
+            By default prints summary of aggregations and parameter calculations
+            performed while traversing the `regression_cols` dictionary.
+            Set to False to prevent all output.
+        """
+        if not len(self.summary) == 0:
+            warnings.warn(
+                "The data_filtered attribute has been overwritten "
+                "and previously applied filtering steps have been "
+                "lost.  It is recommended to use agg_sensors "
+                "before any filtering methods."
+            )
+        # reset summary data
+        self.summary_ix = []
+        self.summary = []
+
+        self.regression_cols_preprocess = copy.deepcopy(self.regression_cols)
+        util.process_reg_cols(self.regression_cols, cd=self, verbose=verbose)
+        self.data_filtered = self.data.copy()
+        self.create_column_group_attributes()
+        if "agg" in self.column_groups:
+            self.create_agg_attributes()
+
+    def custom_param(self, func, *args, **kwargs):
+        """Applies the function `func` with kwargs and adds result as new column to `data`.
+
+        Calculates and adds a new column to `data` using the function `func` with the
+        provided arguments and keyword arguments. See the functions in the calcparams
+        module for examples.
+
+        Called by `util.process_reg_cols` to add new columns to the `data` attribute
+        while recursively processing and updating the `regression_cols` attribute.
+
+        Parameters
+        ----------
+        func : function
+            Function that takes a DataFrame as its first argument and returns a Series.
+
+        Returns
+        -------
+        None
+            Adds a new column to the `data` attribute.
+        """
+        result = func.__name__
+        signature = inspect.signature(func)
+        for key in signature.parameters:
+            if key == "data":
+                continue
+            if key not in kwargs or kwargs[key] is None:
+                if key in self.column_groups.data.keys():
+                    raise ValueError(
+                        f"The kwarg {key} of the function {func.__name__} is also a "
+                        f"column groups id. "
+                        f"Change the name of the column group id or include the kwarg "
+                        f"in the CapData.regression_cols"
+                    )
+                if hasattr(self, key):
+                    kwargs[key] = getattr(self, key)
+        self.data[result] = func(self.data, *args, **kwargs)
 
 
 if __name__ == "__main__":
