@@ -902,6 +902,19 @@ class TestIndexCapdata:
         )
         assert out.shape[0] == 1440
 
+    def test_single_label_missing_key_warns(self, meas):
+        """Warn with the missing label when it is not found anywhere in the CapData.
+
+        A label that is not in `column_groups`, `regression_cols`, or the columns of
+        `data` should emit a warning that names the offending label rather than
+        raising `UnboundLocalError`.
+        """
+        meas.data_filtered = meas.data.iloc[0:10, :].copy()
+        missing_label = "nonexistent_column_group"
+        with pytest.warns(UserWarning, match=missing_label):
+            out = pvc.index_capdata(meas, missing_label, filtered=True)
+        assert out is None
+
 
 class TestLocAndFloc:
     def test_single_label_column_group_key_loc(self, meas):

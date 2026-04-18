@@ -1535,8 +1535,15 @@ def index_capdata(capdata, label, filtered=True):
                         col_or_grp, label
                     )
                 )
+                return None
         elif label in data.columns:
             selected_data = data.loc[:, label]
+        else:
+            warnings.warn(
+                'Label "{}" not found in column_groups keys, regression_cols keys, '
+                "or columns of CapData.data".format(label)
+            )
+            return None
         if isinstance(selected_data, pd.Series):
             return selected_data.to_frame()
         else:
