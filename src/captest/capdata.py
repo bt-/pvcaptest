@@ -38,7 +38,11 @@ import param
 
 from captest import util
 from captest import plotting
-from captest.captest import print_results, highlight_pvals  # noqa: F401
+from captest.captest import (  # noqa: F401
+    print_results,
+    highlight_pvals,
+    perc_wrap,
+)
 
 # visualization library imports
 hv_spec = importlib.util.find_spec("holoviews")
@@ -368,15 +372,6 @@ def wrap_seasons(df, freq):
         return df
     else:
         return df
-
-
-def perc_wrap(p):
-    """Wrap numpy percentile function for use in rep_cond method."""
-
-    def numpy_percentile(x):
-        return np.percentile(x.T, p, method="nearest")
-
-    return numpy_percentile
 
 
 def perc_bounds(percent_filter):
