@@ -1830,62 +1830,75 @@ class CapData(object):
 
     def scatter(self, filtered=True):
         """
-        Create scatter plot of irradiance vs power.
+        Create a matplotlib scatter plot of regression lhs vs. first rhs var.
+
+        Formula-agnostic: resolves the x and y columns from
+        ``self.regression_formula`` via ``util.parse_regression_formula``.
 
         Parameters
         ----------
-        filtered : bool, default true
-            Plots filtered data when true and all data when false.
+        filtered : bool, default True
+            Plots filtered data when True and all data when False.
+
+        Notes
+        -----
+        Prefer ``CapTest.scatter_plots`` for non-default regression presets;
+        it picks the right callable from ``TEST_SETUPS`` (single or multi-
+        panel) automatically.
         """
+        lhs, rhs = util.parse_regression_formula(self.regression_formula)
+        y_col, x_col = lhs[0], rhs[0]
         if filtered:
-            df = self.floc[["power", "poa"]]
+            df = self.floc[[y_col, x_col]]
         else:
-            df = self.loc[["power", "poa"]]
+            df = self.loc[[y_col, x_col]]
 
         if df.shape[1] != 2:
             return warnings.warn("Aggregate sensors before using this method.")
 
-        df = df.rename(columns={df.columns[0]: "power", df.columns[1]: "poa"})
-        plt = df.plot(kind="scatter", x="poa", y="power", title=self.name, alpha=0.2)
+        df = df.rename(columns={df.columns[0]: y_col, df.columns[1]: x_col})
+        plt = df.plot(kind="scatter", x=x_col, y=y_col, title=self.name, alpha=0.2)
         return plt
 
     def scatter_hv(self, timeseries=False, all_reg_columns=False):
         """
-        Create holoviews scatter plot of irradiance vs power.
+        Create a holoviews scatter plot of regression lhs vs. first rhs var.
 
-        Use holoviews opts magics in notebook cell before calling method to
-        adjust height and width of plots:
-
-        %%opts Scatter [height=200, width=400]
-        %%opts Curve [height=200, width=400]
+        Formula-agnostic thin wrapper around ``captest.captest.scatter_default``
+        (with additional timeseries-overlay support, which scatter_default does
+        not provide). For non-default regression presets prefer
+        ``CapTest.scatter_plots`` which picks the right callable (single or
+        multi-panel) from ``TEST_SETUPS``.
 
         Parameters
         ----------
-        timeseries : boolean, default False
-            True adds timeseries plot of the data linked to the scatter plot.
-            Points selected in teh scatter plot will be highlighted in the
-            timeseries plot.
-        all_reg_columns : boolean, default False
-            Set to True to include the data used in the regression in addition
-            to poa irradiance and power in the hover tooltip.
+        timeseries : bool, default False
+            If True, returns a layout with the scatter plot and a linked
+            timeseries plot of the lhs variable. Selecting points in the
+            scatter highlights them in the timeseries.
+        all_reg_columns : bool, default False
+            If True, includes every regression column in the scatter plot's
+            hover tooltip in addition to the x and y variables.
         """
+        lhs, rhs = util.parse_regression_formula(self.regression_formula)
+        y_col, x_col = lhs[0], rhs[0]
         df = self.get_reg_cols(filtered_data=True)
         df.index.name = "index"
-        df.reset_index(inplace=True)
-        vdims = ["power", "index"]
+        df = df.reset_index()
+        vdims = [y_col, "index"]
         if all_reg_columns:
-            vdims.extend(list(df.columns.difference(vdims)))
+            vdims.extend(list(df.columns.difference(vdims + [x_col])))
         hover = HoverTool(
             tooltips=[
                 ("datetime", "@index{%Y-%m-%d %H:%M}"),
-                ("poa", "@poa{0,0.0}"),
-                ("power", "@power{0,0.0}"),
+                (x_col, "@{" + x_col + "}{0,0.0}"),
+                (y_col, "@{" + y_col + "}{0,0.0}"),
             ],
             formatters={
                 "@index": "datetime",
             },
         )
-        poa_vs_kw = hv.Scatter(df, "poa", vdims).opts(
+        scatter = hv.Scatter(df, x_col, vdims).opts(
             size=5,
             tools=[hover, "lasso_select", "box_select"],
             legend_position="right",
@@ -1895,20 +1908,19 @@ class CapData(object):
             selection_line_color="red",
             yformatter=NumeralTickFormatter(format="0,0"),
         )
-        # layout_scatter = (poa_vs_kw).opts(opt_dict)
         if timeseries:
-            power_vs_time = hv.Scatter(df, "index", ["power", "poa"]).opts(
+            power_vs_time = hv.Scatter(df, "index", [y_col, x_col]).opts(
                 tools=[hover, "lasso_select", "box_select"],
                 height=400,
                 width=800,
                 selection_fill_color="red",
                 selection_line_color="red",
             )
-            power_col, poa_col = self.loc[["power", "poa"]].columns
-            power_vs_time_underlay = hv.Curve(
+            y_raw_col, x_raw_col = self.loc[[y_col, x_col]].columns
+            underlay = hv.Curve(
                 self.data.rename_axis("index", axis="index"),
                 "index",
-                [power_col, poa_col],
+                [y_raw_col, x_raw_col],
             ).opts(
                 tools=["lasso_select", "box_select"],
                 height=400,
@@ -1918,11 +1930,10 @@ class CapData(object):
                 line_alpha=0.4,
                 yformatter=NumeralTickFormatter(format="0,0"),
             )
-            layout_timeseries = poa_vs_kw + power_vs_time * power_vs_time_underlay
-            DataLink(poa_vs_kw, power_vs_time)
+            layout_timeseries = scatter + power_vs_time * underlay
+            DataLink(scatter, power_vs_time)
             return layout_timeseries.cols(1)
-        else:
-            return poa_vs_kw
+        return scatter
 
     def plot(
         self,
