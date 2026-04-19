@@ -34,7 +34,7 @@ Out of scope (explicit dependencies):
 - `CapData` (`src/captest/capdata.py:1597`) is the primary user-facing class. Its `regression_cols` attribute supports a nested dict of plain strings, aggregation tuples, and calc tuples; `process_regression_columns` (`capdata.py:3602`) walks it via `util.process_reg_cols` to materialize aggregations and calculated columns using functions from `src/captest/calcparams.py` (`e_total`, `bom_temp`, `cell_temp`, `power_temp_correct`, `rpoa_pvsyst`, `avg_typ_cell_temp`).
 - `CapData.custom_param` (`capdata.py:3633`) auto-pulls missing kwargs from matching attribute names on the `CapData` instance. This is the mechanism by which scalar params set on `CapData` (e.g. `cd.bifaciality`) reach calc-param functions without having to be written into every `reg_cols_*` tuple.
 - Seven module-level functions currently coordinate two `CapData` instances (see section 6).
-- Commit `837853b` on branch `rep-cond-calcparams` extends `rep_cond` with `front_poa`, `func='E2939'`, `rc_kwargs`, and splits the frequency path into a separate `rep_cond_freq`. That branch is the first merge in the implementation sequence.
+- Commit `837853b` on branch `rep-cond-calcparams` extends `rep_cond` with `front_poa`, `func`, `rc_kwargs`, and splits the frequency path into a separate `rep_cond_freq`. That branch is the first merge in the implementation sequence. Immediately after the merge, this spec also removes the `func='E2939'` string-trigger branch so `func` always expects a plain dict (or `None`, which falls back to `{var: 'mean' for var in rhs}`). Responsibility for supplying the right `df.agg()` dict moves into each `TEST_SETUPS` preset's `rep_conditions` entry (section 6).
 
 ## 4. Module layout and architecture
 
@@ -42,7 +42,7 @@ New module: `src/captest/captest.py`. Exported via `src/captest/__init__.py` so 
 
 Contents of `captest.py`:
 
-1. `TEST_SETUPS: dict[str, dict]` — module-level registry of named regression-equation presets. Each value has `reg_cols_meas`, `reg_cols_sim`, `reg_fml`, `scatter_plots`.
+1. `TEST_SETUPS: dict[str, dict]` — module-level registry of named regression-equation presets. Each value has `reg_cols_meas`, `reg_cols_sim`, `reg_fml`, `scatter_plots`, `rep_conditions`.
 2. Three scatter-plot callables: `scatter_default`, `scatter_etotal`, `scatter_bifi_power_tc`. All accept `(cd: CapData, **kwargs) -> hv.Layout`.
 3. `print_results(...)` and `highlight_pvals(...)` — pure formatters relocated from `capdata.py`, consumed only by `CapTest` methods.
 4. `validate_test_setup(entry: dict)`, `resolve_test_setup(name: str, overrides: dict) -> dict`, `load_config(path) -> dict` — internal helpers used by `CapTest`.
@@ -73,11 +73,11 @@ Regression setup:
 - `reg_fml: param.String(default=None)` — if set, overrides the preset formula.
 - `reg_cols_meas: param.Dict(default=None)` — if set, overrides the preset measured regression columns.
 - `reg_cols_sim: param.Dict(default=None)` — if set, overrides the preset modeled regression columns.
+- `rep_conditions: param.Dict(default=None)` — if set, partial-merged onto the preset `rep_conditions` at `setup()` time. Top-level keys replace; the nested `func` dict is merged one level deep so users can override only a single variable's aggregation (e.g. `{"func": {"poa": perc_wrap(55)}}` changes only the POA aggregation and leaves `t_amb`, `w_vel` unchanged). Projects/contracts that dictate different percentile values plug in here.
 - `rep_cond_source: param.Selector(objects=["meas", "sim"], default="meas")` — which CapData's `rc` is used by `captest_results`.
 
 Test scope / time:
 
-- `test_period: param.Dict(default=None)` — `{"start_day": str, "end_day": str}`.
 - `sim_days: param.Integer(default=30, bounds=(1, 365))` — days of simulated data used for the test; values above ~90 are rarely advisable.
 - `shade_filter_start: param.String(default=None)` and `shade_filter_end: param.String(default=None)` — `"HH:MM"` strings for between-time shade filtering.
 
@@ -102,6 +102,13 @@ Calc-params scalars (propagated to both `CapData` instances at `setup()`):
 - `power_temp_coeff: param.Number(default=-0.32)` — percent per degree Celsius.
 - `base_temp: param.Number(default=25)`
 
+Data-loader injection (used by `from_params` / `from_yaml` when a path is supplied; callables are programmatic-only and never serialized to yaml):
+
+- `meas_loader: param.Callable(default=None)` — called as `meas_loader(meas_path, **(meas_load_kwargs or {}))` to build `self.meas`. Default resolution when `None` is `captest.io.load_data`. Projects with bespoke loaders (e.g. `perfactory.io.load_data`, which reads partitioned parquet with a different signature) set this to their own callable at construction time.
+- `meas_load_kwargs: param.Dict(default=None)` — extra kwargs splatted into `meas_loader`. Plain dicts so they CAN be written to yaml (e.g. perfactory's `period`, `groups_to_load`, `column_groups_path`).
+- `sim_loader: param.Callable(default=None)` — same as `meas_loader` but default resolution is `captest.io.load_pvsyst`.
+- `sim_load_kwargs: param.Dict(default=None)` — same shape as `meas_load_kwargs`.
+
 Internal (not `param.*`, not in yaml):
 
 - `self._resolved_setup: dict | None` — plain instance attribute, initialized to `None` in `__init__` and assigned each time `setup()` runs. Not a `param.*` because `setup()` is re-runnable; `constant=True` would block re-assignment on the second call.
@@ -119,7 +126,11 @@ class CapTest(param.Parameterized):
     # param.* declarations above
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "CapTest": ...
+    def from_yaml(cls, path: str | Path, key: str = "captest") -> "CapTest":
+        """Construct from a yaml file. Reads the sub-mapping at the given top-level
+        `key`, defaulting to "captest". Supports multiple captest sections in one
+        file (e.g. key="captest_bifi") so users can run different flavors of the
+        capacity test against the same project."""
 
     @classmethod
     def from_params(cls, **kwargs) -> "CapTest": ...
@@ -128,14 +139,24 @@ class CapTest(param.Parameterized):
         """Resolve TEST_SETUPS, propagate scalars to meas/sim, run
         process_regression_columns on both. Returns self for fluent chaining."""
 
-    def to_yaml(self, path: str | Path) -> None:
-        """Write a curated yaml. Data, CapData instances, regression_results, and
-        _resolved_setup are never written. Callable scatter_plots is never written;
-        a warning is emitted if it was user-overridden."""
+    def to_yaml(self, path: str | Path, key: str = "captest",
+                merge_into_existing: bool = True) -> None:
+        """Write a curated yaml under the top-level `key`. When merge_into_existing
+        is True and the file already exists and parses as a mapping, preserves the
+        other top-level keys (only the `key` subtree is overwritten). Data, CapData
+        instances, regression_results, _resolved_setup, and loader callables are
+        never written. Callable scatter_plots is never written; a warning is emitted
+        if any callable was user-overridden."""
 
     def scatter_plots(self, which: str = "meas", **kwargs):
         """Call the scatter_plots callable from the resolved TEST_SETUPS on
         self.meas (default) or self.sim."""
+
+    def rep_cond(self, which: str = "meas", **overrides) -> None:
+        """Call cd.rep_cond using the resolved TEST_SETUPS rep_conditions as
+        defaults. `**overrides` partial-merges over the resolved dict (top-level
+        keys replace; nested `func` merges one level deep). Mirrors the
+        scatter_plots(which=...) shape."""
 
     def captest_results(self, check_pvalues: bool = False,
                         pval: float = 0.05, print_res: bool = True) -> float: ...
@@ -167,18 +188,21 @@ No `run()`, `apply_filters()`, or `fit()` methods. The caller invokes `ct.meas.f
 
 `CapTest.from_params(**kwargs)`:
 
-1. Pop the four non-param keys: `meas`, `sim`, `meas_path`, `sim_path`. Everything else is passed to `CapTest(**kwargs)`.
-2. If `meas` (a `CapData`) is supplied, assign it; else if `meas_path`, load via `load_data`/`load_pvsyst`; else leave `None`. Same for `sim`.
-3. If both `meas` and `meas_path` are supplied for the same side, pre-built wins and a warning is emitted.
-4. If `self.meas` and `self.sim` are both set, call `self.setup()`. Otherwise return the partially-initialized instance; the user finishes manually.
+1. Pop the non-param keys that control construction: `meas`, `sim`, `meas_path`, `sim_path`. Keys assigned directly as `param.*` values (including the loader callables and kwargs) flow through normal `CapTest(**kwargs)` assignment.
+2. Resolve loaders: `meas_loader = self.meas_loader or captest.io.load_data` and `sim_loader = self.sim_loader or captest.io.load_pvsyst`.
+3. If `meas` (a `CapData`) is supplied, assign it; else if `meas_path`, call `meas_loader(meas_path, **(self.meas_load_kwargs or {}))` and assign; else leave `None`. Same pattern for `sim` with `sim_loader`.
+4. If both `meas` and `meas_path` are supplied for the same side, pre-built wins and a warning is emitted.
+5. If `self.meas` and `self.sim` are both set, call `self.setup()`. Otherwise return the partially-initialized instance; the user finishes manually.
 
-`CapTest.from_yaml(path)`:
+`CapTest.from_yaml(path, key="captest")`:
 
 1. Resolve `path`, remember `path.parent` as the base for relative path resolution.
-2. Parse with `yaml.safe_load`.
-3. Validate: unknown top-level keys raise with a Levenshtein suggestion; `test_setup` is required; `test_setup: "custom"` requires `overrides.reg_cols_meas`, `overrides.reg_cols_sim`, `overrides.reg_fml`; a top-level `reg_fml` and `overrides.reg_fml` cannot both be set; scalars coerced to their param types.
+2. Parse the entire file with `yaml.safe_load`. Extract `config[key]` as the captest-specific sub-mapping. Raise with a clear message if `key` is absent, listing the top-level keys present in the file.
+3. Validate the sub-mapping: unknown keys inside it raise with a Levenshtein suggestion; `test_setup` is required; `test_setup: "custom"` requires `overrides.reg_cols_meas`, `overrides.reg_cols_sim`, `overrides.reg_fml`; a top-level `reg_fml` and `overrides.reg_fml` cannot both be set; scalars coerced to their param types. `"perc_N"` string shorthand in `rep_conditions.func` is resolved to `perc_wrap(N)` at this stage (see section 7.1). Loader callables are NOT expected in yaml.
 4. Resolve `meas_path` / `sim_path` relative to `path.parent`.
 5. Call `CapTest.from_params(**flattened)`.
+
+This supports multiple captest sections in one yaml, e.g. `CapTest.from_yaml("config.yaml", key="captest_e2848")` and `CapTest.from_yaml("config.yaml", key="captest_bifi")` against the same project file.
 
 ### 5.4 `setup()` in detail
 
@@ -190,9 +214,9 @@ Preconditions:
 Steps:
 
 1. Resolve the active `TEST_SETUPS` entry:
-   - If `self.test_setup == "custom"`: require the three override params to be populated; build the resolved dict from them; `scatter_plots` defaults to `scatter_default` if not provided.
-   - Else: `base = copy.deepcopy(TEST_SETUPS[self.test_setup])`; for each of `reg_cols_meas`, `reg_cols_sim`, `reg_fml` set on `self`, overwrite the corresponding key in `base`.
-   - `validate_test_setup(base)`: parse `reg_fml` via `util.parse_regression_formula`; check that lhs + rhs variables are subsets of the keys of both `reg_cols_meas` and `reg_cols_sim`; `scatter_plots` must be callable.
+   - If `self.test_setup == "custom"`: require the three override params to be populated (`reg_cols_meas`, `reg_cols_sim`, `reg_fml`); build the resolved dict from them. `scatter_plots` defaults to `scatter_default` if not provided. `rep_conditions` defaults to an empty dict (letting `rep_cond`'s own `func=None` fallback apply); any value in `self.rep_conditions` is partial-merged in.
+   - Else: `base = copy.deepcopy(TEST_SETUPS[self.test_setup])`; for each of `reg_cols_meas`, `reg_cols_sim`, `reg_fml` set on `self`, overwrite the corresponding key in `base`. If `self.rep_conditions` is set, partial-merge it over `base["rep_conditions"]` (top-level keys replace; nested `func` dict is merged one level deep so a user can override only a single variable's aggregation).
+   - `validate_test_setup(base)`: parse `reg_fml` via `util.parse_regression_formula`; check that lhs + rhs variables are subsets of the keys of both `reg_cols_meas` and `reg_cols_sim`; `scatter_plots` must be callable; `rep_conditions` must be a dict; if `rep_conditions["func"]` is present it must be a dict whose keys are a subset of the formula's rhs variables.
    - Assign to `self._resolved_setup` (plain instance attribute; setup is re-runnable so the value is not constant).
 2. Propagate scalars: for each name in `CapTest._downstream_attrs`, `setattr(cd, name, getattr(self, name))` on both `self.meas` and `self.sim`.
 3. Wire per-CapData state:
@@ -215,12 +239,15 @@ Methods that depend on `setup()` having run (anything touching `self.meas` / `se
 ```python
 TEST_SETUPS: dict[str, dict] = {
     "<preset_name>": {
-        "reg_cols_meas": {...},    # dict; values are column-group ids, (group, agg_func)
+        "reg_cols_meas":  {...},   # dict; values are column-group ids, (group, agg_func)
                                    # tuples, or (callable, kwargs_dict) tuples -- matches
                                    # the existing util.process_reg_cols structure.
-        "reg_cols_sim":  {...},    # same structure, oriented at modeled data.
-        "reg_fml":       str,      # patsy-compatible regression formula.
-        "scatter_plots": callable, # (cd: CapData, **kwargs) -> hv.Layout
+        "reg_cols_sim":   {...},   # same structure, oriented at modeled data.
+        "reg_fml":        str,     # patsy-compatible regression formula.
+        "scatter_plots":  callable,# (cd: CapData, **kwargs) -> hv.Layout
+        "rep_conditions": {...},   # kwargs dict forwarded to cd.rep_cond(...). Keys:
+                                   # func (dict passed to df.agg()), irr_bal,
+                                   # percent_filter, front_poa, rc_kwargs, etc.
     },
     ...
 }
@@ -228,10 +255,11 @@ TEST_SETUPS: dict[str, dict] = {
 
 Rules enforced by `validate_test_setup`:
 
-- All four keys are required; unknown keys raise.
+- All five keys are required; unknown keys raise.
 - `reg_fml` must parse via `util.parse_regression_formula`.
 - The lhs and rhs variables returned by that parser must be subsets of the keys of both `reg_cols_meas` and `reg_cols_sim`.
 - `scatter_plots` must be callable.
+- `rep_conditions` must be a dict. Its `func` entry, if present, must be a dict whose keys are a subset of the formula's rhs variable names.
 
 ### 6.2 Naming convention
 
@@ -257,6 +285,16 @@ The regression-formula **lhs key is always `"power"`** across shipped presets, e
     },
     "reg_fml": "power ~ poa + I(poa*poa) + I(poa*t_amb) + I(poa*w_vel) - 1",
     "scatter_plots": scatter_default,
+    "rep_conditions": {
+        "irr_bal": False,
+        "percent_filter": 20,
+        "front_poa": "poa",
+        "func": {
+            "poa":   perc_wrap(60),
+            "t_amb": "mean",
+            "w_vel": "mean",
+        },
+    },
 }
 ```
 
@@ -284,6 +322,16 @@ The regression-formula **lhs key is always `"power"`** across shipped presets, e
     },
     "reg_fml": "power ~ poa + I(poa*poa) + I(poa*t_amb) + I(poa*w_vel) - 1",
     "scatter_plots": scatter_etotal,
+    "rep_conditions": {
+        "irr_bal": False,
+        "percent_filter": 20,
+        "front_poa": "poa",
+        "func": {
+            "poa":   perc_wrap(60),
+            "t_amb": "mean",
+            "w_vel": "mean",
+        },
+    },
 }
 ```
 
@@ -318,6 +366,15 @@ The regression-formula **lhs key is always `"power"`** across shipped presets, e
     },
     "reg_fml": "power ~ poa + rpoa",
     "scatter_plots": scatter_bifi_power_tc,
+    "rep_conditions": {
+        "irr_bal": False,
+        "percent_filter": 20,
+        "front_poa": "poa",
+        "func": {
+            "poa":  perc_wrap(60),
+            "rpoa": "mean",
+        },
+    },
 }
 ```
 
@@ -333,73 +390,105 @@ All three live next to `TEST_SETUPS` in `captest.py`. Signature `(cd: CapData, *
 
 ### 6.5 Extensibility
 
-Users can register their own preset by assigning into `captest.TEST_SETUPS` at import time. `validate_test_setup` runs the same checks when `CapTest.setup()` resolves the preset. Alternatively, `test_setup: "custom"` at construction time accepts an inline `reg_cols_meas` + `reg_cols_sim` + `reg_fml`; `scatter_plots` then defaults to `scatter_default` unless supplied explicitly.
+Users can register their own preset by assigning into `captest.TEST_SETUPS` at import time. `validate_test_setup` runs the same checks when `CapTest.setup()` resolves the preset. Alternatively, `test_setup: "custom"` at construction time accepts an inline `reg_cols_meas` + `reg_cols_sim` + `reg_fml`; `scatter_plots` then defaults to `scatter_default` unless supplied explicitly, and `rep_conditions` is built from `self.rep_conditions` if set, or defaults to an empty dict (letting `rep_cond`'s own `func=None` fallback apply).
+
+Project- or contract-specific variations of a preset are typically handled via the `CapTest.rep_conditions` override param at construction time (in yaml: under the `overrides.rep_conditions` sub-key). Contracts that require e.g. a 55th percentile POA reporting irradiance can set `rep_conditions={"func": {"poa": perc_wrap(55)}}` without redefining the rest of the preset.
 
 ## 7. YAML schema
 
-Single flat top-level dict with a nested `overrides:` section. Unknown keys raise on load.
+All `CapTest` configuration lives under a single top-level key (default `"captest"`), so the same yaml file can hold other project-level data (perfactory's `loc`, `system`, `client`, etc.) without collision. The sub-key name is parametrizable so one file can hold multiple captest sections (e.g. `captest_e2848`, `captest_bifi`) — enabling different flavors of the capacity test to be run against the same project file. Unknown keys inside the captest sub-mapping raise on load; unknown keys at the file top level are ignored.
 
 ```yaml
-# Name of the TEST_SETUPS preset. Required.
-test_setup: bifi_e2848_etotal
+# Project-level keys (ignored by CapTest; may be consumed by perfactory or others).
+client: barnhart
+loc:    {latitude: 42.28, longitude: -84.65, altitude: 294, tz: America/Detroit}
+system: {albedo: 0.2, axis_azimuth: 180, axis_tilt: 0, max_angle: 60, gcr: 0.315, backtrack: true}
 
-# Optional: paths. If present, CapTest.from_yaml loads the data automatically.
-# Resolved relative to the yaml file's directory.
-meas_path: ./data/meas/
-sim_path:  ./data/pvsyst.csv
+# CapTest section. Name ("captest") is parametrizable via from_yaml(path, key=...)
+captest:
+  # Name of the TEST_SETUPS preset. Required.
+  test_setup: bifi_e2848_etotal
 
-# Optional: per-key overrides of the TEST_SETUPS preset.
-overrides:
-  reg_fml: "power ~ poa + I(poa*poa) + I(poa*t_amb) - 1"
-  # reg_cols_meas: {...}
-  # reg_cols_sim:  {...}
+  # Optional: paths. If present, from_yaml loads the data automatically.
+  # Resolved relative to the yaml file's directory.
+  meas_path: ./data/meas/
+  sim_path:  ./data/pvsyst.csv
 
-# Regression / reporting
-rep_cond_source: meas
-reg_fml: null
-ac_nameplate: 125000
-test_tolerance: "- 4"
+  # Optional: per-key overrides of the TEST_SETUPS preset.
+  overrides:
+    reg_fml: "power ~ poa + I(poa*poa) + I(poa*t_amb) - 1"
+    # reg_cols_meas: {...}
+    # reg_cols_sim:  {...}
+    rep_conditions:
+      percent_filter: 10            # top-level override (replaces just this key)
+      func:
+        poa: "perc_55"              # resolved to perc_wrap(55) at load time
+                                    # (see section 7.1); t_amb/w_vel preserved
+                                    # from the preset via nested merge.
 
-# Test scope
-test_period:
-  start_day: "2026-03-26"
-  end_day:   "2026-04-12"
-sim_days: 30
-shade_filter_start: null
-shade_filter_end:   null
+  # Regression / reporting
+  rep_cond_source: meas
+  reg_fml: null
+  ac_nameplate: 125000
+  test_tolerance: "- 4"
 
-# Filter parameters
-min_irr: 400
-max_irr: 1400
-clipping_irr: 1000
-rep_irr_filter: 0.2
-fshdbm: 1.0
-irrad_stability: std
-irrad_stability_threshold: 30
-hrs_req: 12.5
+  # Test scope
+  sim_days: 30
+  shade_filter_start: null
+  shade_filter_end:   null
 
-# Calc-params scalars
-bifaciality: 0.15
-power_temp_coeff: -0.32
-base_temp: 25
+  # Filter parameters
+  min_irr: 400
+  max_irr: 1400
+  clipping_irr: 1000
+  rep_irr_filter: 0.2
+  fshdbm: 1.0
+  irrad_stability: std
+  irrad_stability_threshold: 30
+  hrs_req: 12.5
+
+  # Calc-params scalars
+  bifaciality: 0.15
+  power_temp_coeff: -0.32
+  base_temp: 25
+
+  # Loader kwargs (used when meas_path / sim_path are set). Plain dicts are fine
+  # in yaml. Loader callables (meas_loader, sim_loader) are programmatic-only.
+  meas_load_kwargs:
+    # Example: perfactory's load_data uses `period` and `groups_to_load`.
+    period: {start_day: "2026-03-26", end_day: "2026-04-12"}
+    groups_to_load: [irr_poa, irr_rpoa, temp_amb, wind_speed, real_pwr_mtr]
+  sim_load_kwargs: {}
 ```
 
 Validation rules:
 
-- `test_setup` is required; must be a key in `TEST_SETUPS` or the literal `"custom"`.
+- `test_setup` is required under the captest key; must be a key in `TEST_SETUPS` or the literal `"custom"`.
 - `"custom"` requires `overrides.reg_cols_meas`, `overrides.reg_cols_sim`, `overrides.reg_fml` all present.
-- `reg_fml:` at top level and `overrides.reg_fml:` cannot both be set.
+- `reg_fml:` at the captest top level and `overrides.reg_fml:` cannot both be set.
 - `null` for an optional scalar is equivalent to omitting the key.
-- Unknown top-level keys raise with a Levenshtein suggestion.
-- `scatter_plots` is never serialized.
+- Unknown keys inside the captest sub-mapping raise with a Levenshtein suggestion.
+- `scatter_plots`, `meas_loader`, `sim_loader` are never serialized.
 
-`to_yaml` output:
+### 7.1 `perc_wrap` and other non-serializable function values
 
-- Writes every scalar `param.*` (except `meas`, `sim`, `_resolved_setup`).
-- Writes `test_setup:` and, if any of `reg_cols_meas`, `reg_cols_sim`, `reg_fml` differ from the resolved preset, those keys under `overrides:`.
+The `func` dict in `rep_conditions` typically uses `perc_wrap(N)` closures for percentile aggregations. Plain yaml cannot represent a Python callable. Two supported options:
+
+1. **Preset defaults only** — yaml omits `overrides.rep_conditions.func` and relies on the preset's built-in dict. Most users never have to write a callable in yaml.
+2. **Named-percentile shorthand** — users write `func: {poa: "perc_60"}` in yaml; the loader converts the `"perc_N"` string into `perc_wrap(N)` at parse time. Supported pattern: `"perc_<int>"`. Strings that don't match the pattern (e.g. `"mean"`, `"median"`, `"sum"`) pass through unchanged as pandas agg names. Malformed `"perc_..."` strings (`"perc_"`, `"perc_x"`) raise a clear error at load time.
+
+Arbitrary Python callables cannot be loaded from yaml.
+
+### 7.2 `to_yaml` output
+
+- Writes every scalar `param.*` under the given top-level `key` (default `"captest"`), excluding `meas`, `sim`, `_resolved_setup`, and loader callables.
+- Writes `test_setup:` and, if any of `reg_cols_meas`, `reg_cols_sim`, `reg_fml`, `rep_conditions` differ from the resolved preset, those keys under `overrides:`. Equivalent values are omitted.
 - Writes `meas_path` / `sim_path` only when the class was constructed with those.
-- Never writes data, CapData instances, `regression_results`, or filtered data.
-- Emits a single warning if the user overrode `scatter_plots` with a custom callable (that callable cannot round-trip).
+- Writes `meas_load_kwargs` / `sim_load_kwargs` when non-empty.
+- Never writes data, CapData instances, `regression_results`, filtered data, loader callables, or `scatter_plots` callables.
+- Percentile `perc_wrap(N)` values in `rep_conditions.func` are written back as `"perc_N"` strings (round-trippable).
+- Emits a single warning if the user overrode `scatter_plots` or a loader callable (these cannot round-trip).
+- When `merge_into_existing=True` and the target file already exists and parses as a mapping, preserves untouched top-level keys; only the sub-tree at `key` is overwritten.
 - Output order is deterministic; rendered with `yaml.safe_dump(sort_keys=False)`.
 
 ## 8. Ported functions: `CapData` -> `CapTest`
@@ -431,9 +520,9 @@ Every test and example that called the module-level forms is updated to use the 
 
 Methods in `CapData` (and `plotting.py`) that still assume the ASTM E2848 regression or the canonical four-key `regression_cols`. These are surfaced here as a **dependency inventory**; only section 9.2 is implemented in this PR. Everything else is deferred and tracked in the issue-tracker appendix (section 12).
 
-### 9.1 Addressed by dependency
+### 9.1 Addressed by dependency (with additional simplification)
 
-- `CapData.rep_cond` and `CapData.rep_cond_freq` — handled by `rep-cond-calcparams`, merged before this work starts.
+- `CapData.rep_cond` and `CapData.rep_cond_freq` — handled by `rep-cond-calcparams`, merged before this work starts. Immediately after the merge, this spec removes the `func='E2939'` string-trigger branch: `func` now accepts a plain dict or `None` (fallback: `{var: 'mean' for var in rhs}`). Responsibility for supplying the right `df.agg()` dict moves into each `TEST_SETUPS` preset's `rep_conditions` entry (section 6). This is a small net-negative diff in `capdata.py` and removes a string sentinel that's otherwise hard to discover.
 
 ### 9.2 In scope for this spec
 
@@ -577,6 +666,38 @@ All fixtures use `scope="function"` — setup is re-run per test so state is her
 - `test_power_temp_coeff_flows_into_power_temp_correct`.
 - `test_base_temp_flows_into_power_temp_correct`.
 
+`TestLoaderInjection`:
+
+- `test_default_meas_loader_is_load_data` — without an explicit `meas_loader`, `from_params(meas_path=...)` calls `captest.io.load_data`.
+- `test_default_sim_loader_is_load_pvsyst`.
+- `test_custom_meas_loader_called` — supply a mock loader; verify it was called with `(path, **meas_load_kwargs)`.
+- `test_custom_meas_loader_kwargs_splatted` — verify every key in `meas_load_kwargs` flows through as a kwarg to the loader.
+- `test_loader_callables_not_serialized_in_to_yaml` — setting `meas_loader=custom` and calling `to_yaml` writes nothing for it (warning emitted once).
+
+`TestRepCondConvenience`:
+
+- `test_rep_cond_calls_cd_rep_cond_with_resolved_defaults` — `ct.rep_cond()` forwards the preset's `rep_conditions` unchanged to `cd.rep_cond`.
+- `test_rep_cond_partial_merge_overrides` — `ct.rep_cond(percent_filter=10)` replaces only `percent_filter`; `func` preserved.
+- `test_rep_cond_func_partial_merge` — `ct.rep_cond(func={"poa": perc_wrap(55)})` replaces only the POA entry in `func`; `t_amb`/`w_vel` preserved.
+- `test_rep_cond_which_sim` — `ct.rep_cond(which="sim")` calls `self.sim.rep_cond(...)` not `self.meas`.
+- `test_rep_conditions_override_from_init_partial_merges_onto_preset` — setting `rep_conditions={"percent_filter": 10}` in `CapTest(...)` leaves everything else from the preset intact after `setup()`.
+- `test_each_preset_rep_conditions_round_trips_through_rep_cond` — parametrized over presets; `ct.rep_cond()` runs without errors on each.
+
+`TestYamlPercShorthand`:
+
+- `test_perc_N_string_converts_to_perc_wrap` — yaml with `overrides.rep_conditions.func: {poa: "perc_55"}` loads to a dict whose `poa` value, when applied to a sample Series, matches `perc_wrap(55)` applied to the same series.
+- `test_mean_string_passes_through` — `"mean"` in yaml remains a plain `"mean"` string.
+- `test_invalid_perc_string_raises` — `"perc_x"`, `"perc_"` raise at load time with a clear message.
+- `test_to_yaml_emits_perc_N_for_perc_wrap` — round-trip: a `CapTest` with `rep_conditions.func["poa"] == perc_wrap(55)` serializes that entry as the string `"perc_55"`.
+
+`TestYamlKeyParametrization`:
+
+- `test_from_yaml_nested_under_captest_key_by_default`.
+- `test_from_yaml_custom_key_e_g_captest_bifi`.
+- `test_from_yaml_missing_key_raises_with_available_keys_listed`.
+- `test_to_yaml_writes_under_custom_key`.
+- `test_to_yaml_merge_into_existing_preserves_other_top_level_keys`.
+
 `TestIntegration` (end-to-end per preset):
 
 - `test_end_to_end_e2848_default` — full canonical sequence: load data -> `CapTest.setup()` -> `ct.meas.filter_irr(ct.min_irr, ct.max_irr)` -> `ct.meas.filter_shade(fshdbm=ct.fshdbm)` (if applicable) -> `ct.meas.filter_time(start=..., end=...)` -> `ct.meas.rep_cond(...)` -> `ct.meas.fit_regression()`; same on sim; `ct.captest_results()` returns a cap ratio in a realistic range (e.g. `0.8 < cap_ratio < 1.2`) without errors or warnings.
@@ -599,15 +720,19 @@ All fixtures use `scope="function"` — setup is re-run per test so state is her
 
 ## 11. Implementation sequence
 
+All test writing follows `.agents/skills/unit-tests/SKILL.md` (TDD-first for new code; coverage checks on net-new lines). User-facing doc updates follow `.agents/skills/docs-update/SKILL.md`. PR creation at the end follows `.agents/skills/create-pr/SKILL.md`.
+
 1. Merge `rep-cond-calcparams` into `captest-class`. Resolve any conflicts; run `just test` before proceeding.
-2. Relocate `print_results` and `highlight_pvals` to a new `src/captest/captest.py` stub. Tests for those helpers continue to pass via the new import.
-3. Add `TEST_SETUPS`, `validate_test_setup`, `resolve_test_setup`, `load_config`, and the three scatter callables. Unit-test the registry and callables standalone.
-4. Reimplement `CapData.scatter` / `CapData.scatter_hv` as wrappers calling `scatter_default`. Update unit tests.
-5. Add the `CapTest` class with `param.*` attributes, constructors, and `setup()`. Wire `_downstream_attrs`. Add `TestConstruction`, `TestFromYaml`, `TestSetup`, `TestDownstreamPropagation` tests.
-6. Port the seven cross-`CapData` functions onto `CapTest`. Remove the module-level versions. Update all callsite tests. Add `TestPortedMethods`.
-7. Implement `to_yaml`. Add `TestToYamlAndRoundTrip`.
-8. Add the three `TestIntegration` tests.
-9. Update CHANGELOG and user-facing docs (quickstart / API reference). Add the issue-tracker entries from section 12 as GitHub issues.
+2. Simplify `rep_cond` immediately after the merge: remove the `func='E2939'` string-trigger so `func` accepts a plain dict or `None` with a `{var: 'mean' for var in rhs}` fallback. Update existing `rep_cond` tests (parametrize over the three `TEST_SETUPS` `rep_conditions["func"]` dicts).
+3. Relocate `print_results` and `highlight_pvals` to a new `src/captest/captest.py` stub. Tests for those helpers continue to pass via the new import.
+4. Add `TEST_SETUPS` (with `rep_conditions` on each preset), `validate_test_setup`, `resolve_test_setup`, `load_config`, and the three scatter callables. Unit-test the registry and callables standalone.
+5. Reimplement `CapData.scatter` / `CapData.scatter_hv` as wrappers calling `scatter_default`. Update unit tests.
+6. Add the `CapTest` class with `param.*` attributes (including the four loader params and `rep_conditions`), constructors, `setup()`, and the `rep_cond` / `scatter_plots` convenience methods. Wire `_downstream_attrs`. Add `TestConstruction`, `TestFromYaml`, `TestSetup`, `TestDownstreamPropagation`, `TestLoaderInjection`, `TestRepCondConvenience` tests.
+7. Port the seven cross-`CapData` functions onto `CapTest`. Remove the module-level versions. Update all callsite tests. Add `TestPortedMethods`.
+8. Implement `to_yaml` with `key=` and `merge_into_existing=` kwargs, plus the `"perc_N"` string shorthand for `rep_conditions.func` values. Add `TestToYamlAndRoundTrip`, `TestYamlPercShorthand`, `TestYamlKeyParametrization`.
+9. Add the three `TestIntegration` tests.
+10. Update CHANGELOG and user-facing docs (quickstart / API reference), following the docs-update skill. Add the issue-tracker entries from section 12 as GitHub issues.
+11. Open the PR following the create-pr skill.
 
 ## 12. Issue tracker appendix
 
