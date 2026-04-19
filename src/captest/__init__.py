@@ -6,6 +6,7 @@ from captest import (
     io as io,
     plotting as plotting,
     calcparams as calcparams,
+    captest as captest,
 )
 
 from captest.io import (

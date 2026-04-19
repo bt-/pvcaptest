@@ -38,6 +38,7 @@ import param
 
 from captest import util
 from captest import plotting
+from captest.captest import print_results, highlight_pvals  # noqa: F401
 
 # visualization library imports
 hv_spec = importlib.util.find_spec("holoviews")
@@ -1316,32 +1317,6 @@ def captest_results(
         )
 
     return cap_ratio
-
-
-def print_results(test_passed, expected, actual, cap_ratio, capacity, bounds):
-    """Print formatted results of capacity test."""
-    if test_passed[0]:
-        print("{:<30s}{}".format("Capacity Test Result:", "PASS"))
-    else:
-        print("{:<25s}{}".format("Capacity Test Result:", "FAIL"))
-
-    print(
-        "{:<30s}{:0.3f}".format("Modeled test output:", expected)
-        + "\n"
-        + "{:<30s}{:0.3f}".format("Actual test output:", actual)
-        + "\n"
-        + "{:<30s}{:0.3f}".format("Tested output ratio:", cap_ratio)
-        + "\n"
-        + "{:<30s}{:0.3f}".format("Tested Capacity:", capacity)
-    )
-
-    print("{:<30s}{}\n\n".format("Bounds:", test_passed[1]))
-
-
-def highlight_pvals(s):
-    """Highlight vals greater than or equal to 0.05 in a Series yellow."""
-    is_greaterthan = s >= 0.05
-    return ["background-color: yellow" if v else "" for v in is_greaterthan]
 
 
 def captest_results_check_pvalues(
