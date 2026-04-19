@@ -3155,132 +3155,200 @@ class CapData(object):
         except TypeError:
             print("No filters have been run.")
 
-    @update_summary
     def rep_cond(
         self,
         irr_bal=False,
         percent_filter=20,
+        front_poa="poa",
         w_vel=None,
-        inplace=True,
-        func={"poa": perc_wrap(60), "t_amb": "mean", "w_vel": "mean"},
-        freq=None,
-        grouper_kwargs={},
+        func=None,
         rc_kwargs={},
     ):
         """
-        Calculate reporting conditons.
+        Calculate reporting conditions for the current regression formula.
+
+        The calculation is formula-agnostic: the right-hand-side variables of
+        ``self.regression_formula`` drive which columns are aggregated. Always
+        writes the result to ``self.rc``.
 
         Parameters
         ----------
-        irr_bal: boolean, default False
+        irr_bal : bool, default False
             If True, uses `ReportingIrradiance` to determine the reporting
-            irradiance. Replaces the calculations specified by ``func``
-            with or without ``freq``. When ``irr_bal`` is True, the reporting
-            temperature and wind speed are the means of the data within the
+            irradiance (``front_poa``). When True, the other reporting
+            conditions are aggregated from the subset of data within the
             balanced irradiance band.
         percent_filter : int, default 20
             Percentage used to define the irradiance band around the reporting
             irradiance when ``irr_bal`` is True. Has no effect when
             ``irr_bal`` is False.
-        func: callable, string, dictionary, or list of string/callables
-            Determines how the reporting condition is calculated.
-            Default is a dictionary poa - 60th numpy_percentile, t_amb - mean
-                                          w_vel - mean
-            Can pass a string function ('mean') to calculate each reporting
-            condition the same way.
-        freq: str
-            String pandas offset alias to specify aggregation frequency
-            for reporting condition calculation. Ex '60D' for 60 Days or
-            'MS' for months start.
-        w_vel: int
+        front_poa : str, default 'poa'
+            Key in ``self.regression_cols`` whose column is used as the
+            irradiance driver when ``irr_bal`` is True.
+        w_vel : numeric or None
             If not None, overrides the calculated wind speed reporting
             condition with this value.
-        inplace: bool, True by default
-            When true updates object rc parameter, when false returns
-            dicitionary of reporting conditions.
-        grouper_kwargs : dict
-            Passed to pandas Grouper to control label and closed side of
-            intervals. See pandas Grouper doucmentation for details. Default is
-            left labeled and left closed.
+        func : dict, str, callable, or None, default None
+            Passed to ``df.agg(...)``. A dict maps rhs variable names to
+            aggregation functions (e.g. ``{'poa': perc_wrap(60), 't_amb':
+            'mean'}``). When None, defaults to ``{var: 'mean' for var in rhs}``
+            where ``rhs`` is derived from ``self.regression_formula``.
         rc_kwargs : dict
-            Passed to `ReportingIrradiance` if ``irr_bal`` is True.
+            Passed to ``ReportingIrradiance`` when ``irr_bal`` is True.
 
         Returns
         -------
-        dict
-            Returns a dictionary of reporting conditions if inplace=False
-            otherwise returns None.
-        pandas DataFrame
-            If pred=True, then returns a pandas dataframe of results.
+        None
+            Reporting conditions are stored on ``self.rc`` as a one-row
+            DataFrame. Use ``rep_cond_freq`` for seasonal/monthly outputs.
         """
-        df = self.floc[["poa", "t_amb", "w_vel"]]
-        df = df.rename(
-            columns={
-                df.columns[0]: "poa",
-                df.columns[1]: "t_amb",
-                df.columns[2]: "w_vel",
-            }
-        )
+        lhs, rhs = util.parse_regression_formula(self.regression_formula)
+        df = self.get_reg_cols(reg_vars=rhs)
+
+        if func is None:
+            func = {var: "mean" for var in rhs}
 
         RCs_df = pd.DataFrame(df.agg(func)).T
 
         if irr_bal:
+            if front_poa not in df.columns:
+                raise ValueError(
+                    f"front_poa={front_poa!r} is not a right-hand-side variable "
+                    f"of the regression formula."
+                )
             self.rc_tool = ReportingIrradiance(
                 df,
-                "poa",
+                front_poa,
                 percent_band=percent_filter,
                 **rc_kwargs,
             )
             results = self.rc_tool.get_rep_irr()
             flt_df = results[1]
-            temp_RC = flt_df["t_amb"].mean()
-            wind_RC = flt_df["w_vel"].mean()
-            RCs_df = pd.DataFrame(
-                {"poa": results[0], "t_amb": temp_RC, "w_vel": wind_RC}, index=[0]
-            )
+            RCs_df = pd.DataFrame(flt_df.agg(func)).T
+            RCs_df.loc[RCs_df.index[0], front_poa] = results[0]
 
-        if w_vel is not None:
-            RCs_df.loc[0, "w_vel"] = w_vel
+        if w_vel is not None and "w_vel" in RCs_df.columns:
+            RCs_df.loc[RCs_df.index[0], "w_vel"] = w_vel
 
-        if freq is not None:
+        print("Reporting conditions saved to rc attribute.")
+        print(RCs_df)
+        self.rc = RCs_df
+
+    def rep_cond_freq(
+        self,
+        irr_bal=False,
+        percent_filter=20,
+        front_poa="poa",
+        w_vel=None,
+        inplace=True,
+        func=None,
+        freq=None,
+        grouper_kwargs={},
+        rc_kwargs={},
+    ):
+        """
+        Calculate frequency-grouped reporting conditions.
+
+        Like ``rep_cond`` but aggregates within groups defined by ``freq``
+        (e.g. ``'MS'`` for month-start, ``'60D'`` for 60-day). Used for
+        seasonal or monthly reporting tests.
+
+        Parameters
+        ----------
+        irr_bal : bool, default False
+            See ``rep_cond``.
+        percent_filter : int, default 20
+            See ``rep_cond``.
+        front_poa : str, default 'poa'
+            See ``rep_cond``.
+        w_vel : numeric or None
+            See ``rep_cond``.
+        inplace : bool, default True
+            When True writes the multi-row RC DataFrame to ``self.rc``; when
+            False returns the DataFrame.
+        func : dict, str, callable, or None, default None
+            See ``rep_cond``.
+        freq : str or None
+            Pandas offset alias. ``None`` falls back to single-row ``rep_cond``
+            behavior.
+        grouper_kwargs : dict
+            Passed to ``pandas.Grouper``.
+        rc_kwargs : dict
+            Passed to ``ReportingIrradiance`` when ``irr_bal`` is True.
+
+        Returns
+        -------
+        DataFrame or None
+            Multi-row DataFrame of per-group reporting conditions when
+            ``inplace=False``. Otherwise stores on ``self.rc`` and returns
+            ``None``.
+        """
+        lhs, rhs = util.parse_regression_formula(self.regression_formula)
+        df = self.get_reg_cols(reg_vars=rhs)
+
+        if func is None:
+            func = {var: "mean" for var in rhs}
+
+        if freq is None:
+            # Degenerate case: act like rep_cond.
+            RCs_df = pd.DataFrame(df.agg(func)).T
+            if irr_bal:
+                if front_poa not in df.columns:
+                    raise ValueError(
+                        f"front_poa={front_poa!r} is not a right-hand-side variable "
+                        f"of the regression formula."
+                    )
+                self.rc_tool = ReportingIrradiance(
+                    df, front_poa, percent_band=percent_filter, **rc_kwargs
+                )
+                results = self.rc_tool.get_rep_irr()
+                flt_df = results[1]
+                RCs_df = pd.DataFrame(flt_df.agg(func)).T
+                RCs_df.loc[RCs_df.index[0], front_poa] = results[0]
+            if w_vel is not None and "w_vel" in RCs_df.columns:
+                RCs_df.loc[RCs_df.index[0], "w_vel"] = w_vel
+        else:
             # wrap_seasons passes df through unchanged unless freq is one of
-            # 'BQ-JAN', 'BQ-FEB', 'BQ-APR', 'BQ-MAY', 'BQ-JUL',
-            # 'BQ-AUG', 'BQ-OCT', 'BQ-NOV'
+            # 'BQE-JAN', 'BQE-FEB', 'BQE-APR', 'BQE-MAY', 'BQE-JUL',
+            # 'BQE-AUG', 'BQE-OCT', 'BQE-NOV'
             df = wrap_seasons(df, freq)
             df_grpd = df.groupby(pd.Grouper(freq=freq, **grouper_kwargs))
 
             if irr_bal:
+                if front_poa not in df.columns:
+                    raise ValueError(
+                        f"front_poa={front_poa!r} is not a right-hand-side variable "
+                        f"of the regression formula."
+                    )
                 ix = pd.DatetimeIndex(list(df_grpd.groups.keys()), freq=freq)
-                poa_RC = []
-                temp_RC = []
-                wind_RC = []
-                for name, month in df_grpd:
+                monthly_rcs = []
+                for grp_key, month in df_grpd:
                     self.rc_tool = ReportingIrradiance(
                         month,
-                        "poa",
+                        front_poa,
                         percent_band=percent_filter,
                         **rc_kwargs,
                     )
                     results = self.rc_tool.get_rep_irr()
-                    poa_RC.append(results[0])
                     flt_df = results[1]
-                    temp_RC.append(flt_df["t_amb"].mean())
-                    wind_RC.append(flt_df["w_vel"].mean())
-                RCs_df = pd.DataFrame(
-                    {"poa": poa_RC, "t_amb": temp_RC, "w_vel": wind_RC}, index=ix
-                )
+                    monthly_rc = pd.DataFrame(flt_df.agg(func)).T
+                    monthly_rc.index = [grp_key]
+                    monthly_rc.loc[grp_key, front_poa] = results[0]
+                    monthly_rcs.append(monthly_rc)
+                RCs_df = pd.concat(monthly_rcs)
+                RCs_df.index = ix
             else:
                 RCs_df = df_grpd.agg(func)
 
-            if w_vel is not None:
+            if w_vel is not None and "w_vel" in RCs_df.columns:
                 RCs_df["w_vel"] = w_vel
 
         if inplace:
             print("Reporting conditions saved to rc attribute.")
             print(RCs_df)
             self.rc = RCs_df
-        else:
-            return RCs_df
+            return None
+        return RCs_df
 
     def predict_capacities(self, irr_filter=True, percent_filter=20, **kwargs):
         """

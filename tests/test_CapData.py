@@ -268,7 +268,7 @@ class TestTopLevelFuncs(unittest.TestCase):
             power="real_pwr__", poa="irr_poa_", t_amb="temp_amb_", w_vel="wind__"
         )
         pvsyst.filter_irr(200, 800)
-        pvsyst.rep_cond(freq="MS")
+        pvsyst.rep_cond_freq(freq="MS")
         grps = pvsyst.data_filtered.groupby(pd.Grouper(freq="MS", label="left"))
         poa_col = pvsyst.column_groups[pvsyst.regression_cols["poa"]][0]
 
@@ -1954,41 +1954,41 @@ class TestRepCondNoFreq:
         nrel.rep_cond(w_vel=50)
         assert nrel.rc["w_vel"][0] == 50
 
-    def test_defaults_not_inplace(self, nrel):
-        df = nrel.rep_cond(inplace=False)
-        assert nrel.rc is None
-        assert isinstance(df, pd.core.frame.DataFrame)
-
-    def test_irr_bal_inplace(self, nrel):
+    def test_irr_bal(self, nrel):
         nrel.filter_irr(0.1, 2000)
         meas2 = nrel.copy()
         meas2.rep_cond()
         nrel.rep_cond(irr_bal=True, percent_filter=20)
         assert isinstance(nrel.rc, pd.core.frame.DataFrame)
-        assert nrel.rc["poa"][0] != meas2.rc["poa"][0]
+        assert nrel.rc["poa"].iloc[0] != meas2.rc["poa"].iloc[0]
 
-    def test_irr_bal_inplace_wvel(self, nrel):
+    def test_irr_bal_wvel(self, nrel):
         nrel.rep_cond(irr_bal=True, percent_filter=20, w_vel=50)
-        assert nrel.rc["w_vel"][0] == 50
+        assert nrel.rc["w_vel"].iloc[0] == 50
+
+    def test_custom_func_dict(self, nrel):
+        """Passing a func dict overrides the mean default per rhs variable."""
+        nrel.rep_cond(func={"poa": pvc.perc_wrap(60), "t_amb": "mean", "w_vel": "mean"})
+        assert isinstance(nrel.rc, pd.core.frame.DataFrame)
 
 
 class TestRepCondFreq:
     def test_monthly_no_irr_bal(self, pvsyst):
-        pvsyst.rep_cond(freq="ME")
+        pvsyst.rep_cond_freq(freq="ME")
         # Check that the rc attribute is a dataframe
         assert isinstance(pvsyst.rc, pd.core.frame.DataFrame)
         # Rep conditions dataframe should have 12 rows
         assert pvsyst.rc.shape[0] == 12
 
     def test_monthly_irr_bal(self, pvsyst):
-        pvsyst.rep_cond(freq="ME", irr_bal=True, percent_filter=20)
+        pvsyst.rep_cond_freq(freq="ME", irr_bal=True, percent_filter=20)
         # Check that the rc attribute is a dataframe
         assert isinstance(pvsyst.rc, pd.core.frame.DataFrame)
         # Rep conditions dataframe should have 12 rows
         assert pvsyst.rc.shape[0] == 12
 
     def test_seas_no_irr_bal(self, pvsyst):
-        pvsyst.rep_cond(freq="QE-DEC", irr_bal=False)
+        pvsyst.rep_cond_freq(freq="QE-DEC", irr_bal=False)
         # Check that the rc attribute is a dataframe
         assert isinstance(pvsyst.rc, pd.core.frame.DataFrame)
         # Rep conditions dataframe should have 4 rows
@@ -1997,7 +1997,7 @@ class TestRepCondFreq:
 
 class TestPredictCapacities:
     def test_monthly(self, pvsyst_irr_filter):
-        pvsyst_irr_filter.rep_cond(freq="MS")
+        pvsyst_irr_filter.rep_cond_freq(freq="MS")
         pred_caps = pvsyst_irr_filter.predict_capacities(
             irr_filter=True, percent_filter=20
         )
@@ -2012,7 +2012,9 @@ class TestPredictCapacities:
             "7/1/90":"7/31/90", :
         ]
         pvsyst_irr_filter.rep_cond()
-        pvsyst_irr_filter.filter_irr(0.8, 1.2, ref_val=pvsyst_irr_filter.rc["poa"][0])
+        pvsyst_irr_filter.filter_irr(
+            0.8, 1.2, ref_val=pvsyst_irr_filter.rc["poa"].iloc[0]
+        )
         df = pvsyst_irr_filter.floc["regcols"]
         rename = {
             df.columns[0]: "power",
@@ -2026,19 +2028,19 @@ class TestPredictCapacities:
         assert july_manual == pytest.approx(july_grpby)
 
     def test_no_irr_filter(self, pvsyst_irr_filter):
-        pvsyst_irr_filter.rep_cond(freq="ME")
+        pvsyst_irr_filter.rep_cond_freq(freq="ME")
         pred_caps = pvsyst_irr_filter.predict_capacities(irr_filter=False)
         assert isinstance(pred_caps, pd.core.frame.DataFrame)
         assert pred_caps.shape[0] == 12
 
     def test_rc_from_irrBal(self, pvsyst_irr_filter):
-        pvsyst_irr_filter.rep_cond(freq="ME", irr_bal=True, percent_filter=20)
+        pvsyst_irr_filter.rep_cond_freq(freq="ME", irr_bal=True, percent_filter=20)
         pred_caps = pvsyst_irr_filter.predict_capacities(irr_filter=False)
         assert isinstance(pred_caps, pd.core.frame.DataFrame)
         assert pred_caps.shape[0] == 12
 
     def test_seasonal_freq(self, pvsyst_irr_filter):
-        pvsyst_irr_filter.rep_cond(freq="QE-DEC")
+        pvsyst_irr_filter.rep_cond_freq(freq="QE-DEC")
         pred_caps = pvsyst_irr_filter.predict_capacities(
             irr_filter=True, percent_filter=20
         )
