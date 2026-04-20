@@ -5,6 +5,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- New `CapTest` class (`captest.captest.CapTest`) — a `param.Parameterized`
+container that binds a measured and a modeled `CapData` together, holds every
+test-level setting (regression formula, reporting-conditions recipe, filter
+bounds, nameplate, tolerance, calc-params scalars), and drives the full
+capacity-test workflow from a single object.
+- New `TEST_SETUPS` registry of named regression presets shipped with
+pvcaptest. Three presets ship: `e2848_default` (default ASTM E2848),
+`bifi_e2848_etotal` (bifacial ASTM with `e_total` driver), and
+`bifi_power_tc` (temperature-corrected bifacial `power ~ poa + rpoa`).
+- New `captest.captest` module. Exports `CapTest`, `TEST_SETUPS`, the three
+scatter callables `scatter_default`, `scatter_etotal`, `scatter_bifi_power_tc`,
+and the helpers `perc_wrap`, `print_results`, `highlight_pvals`,
+`load_config`, `resolve_test_setup`, `validate_test_setup`.
+- `CapTest.from_yaml` / `CapTest.to_yaml` for a curated round-trip through a
+yaml config file. The top-level `key` is parametrizable so one file can hold
+multiple captest sections (e.g. `captest_e2848`, `captest_bifi`).
+- `"perc_N"` string shorthand in yaml `rep_conditions.func` values.
+`from_yaml` resolves these to `perc_wrap(N)` callables at load time;
+`to_yaml` emits them back as `"perc_N"` strings for round-trip.
+- Documentation: new user-guide page `user_guide/captest` covering
+construction, setup, the canonical filter → `rep_cond` → `fit_regression` →
+`captest_results` workflow, overrides, and yaml round-trip.
+
+### Changed
+- **Breaking:** the module-level cross-`CapData` helpers
+`capdata.captest_results`, `capdata.captest_results_check_pvalues`,
+`capdata.pick_attr`, `capdata.get_summary(*args)`,
+`capdata.overlay_scatters`, `capdata.determine_pass_or_fail`, and
+`plotting.residual_plot` have been removed. Equivalent methods now live on
+`CapTest` (`ct.captest_results()`, `ct.captest_results_check_pvalues()`,
+`ct.get_summary()`, `ct.overlay_scatters()`, `ct.determine_pass_or_fail()`,
+`ct.residual_plot()`). `pick_attr` is superseded by the `rep_cond_source`
+parameter on `CapTest`. Single-CapData `cd.get_summary()` is unchanged.
+- **Breaking:** `CapData.rep_cond` and `CapData.rep_cond_freq` are now
+formula-agnostic: they derive rhs variables from `regression_formula` via
+`util.parse_regression_formula`. The `func='E2939'` string sentinel has been
+removed. Pass a plain dict mapping rhs variable names to aggregation
+functions (e.g. `{'poa': perc_wrap(60), 't_amb': 'mean', 'w_vel': 'mean'}`),
+or omit `func` for the `{var: 'mean' for var in rhs}` fallback. The
+responsibility for supplying the right `df.agg()` dict now lives on each
+`TEST_SETUPS` preset's `rep_conditions` entry.
+- `CapData.scatter` and `CapData.scatter_hv` are now formula-agnostic thin
+wrappers: they resolve the y (lhs) and x (first rhs) columns from
+`regression_formula` rather than hardcoding `"power"` and `"poa"`. For
+non-default regression presets prefer `CapTest.scatter_plots`, which picks
+the correct scatter callable (single or multi-panel) from the resolved
+preset.
+
+### Convention
+- The left-hand-side key of the regression formula is always `"power"`
+across shipped `TEST_SETUPS` presets, even when the formula regresses a
+derived quantity like temperature-corrected power. Code that hardcodes
+`"power"` as the lhs key continues to work with all shipped presets.
 
 [0.14.0]: https://github.com/pvcaptest/pvcaptest/compare/v0.13.4...v0.14.0
 ## [0.14.0] - 2026-04-07

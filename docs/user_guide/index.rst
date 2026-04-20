@@ -7,3 +7,4 @@ User Guide
 
     dataload
     bifacial
+    captest
