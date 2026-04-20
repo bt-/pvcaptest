@@ -38,11 +38,6 @@ import param
 
 from captest import util
 from captest import plotting
-from captest.captest import (  # noqa: F401
-    print_results,
-    highlight_pvals,
-    perc_wrap,
-)
 
 # visualization library imports
 hv_spec = importlib.util.find_spec("holoviews")
@@ -3715,6 +3710,17 @@ class CapData(object):
                 if hasattr(self, key):
                     kwargs[key] = getattr(self, key)
         self.data[result] = func(self.data, *args, **kwargs)
+
+
+# Deferred imports from captest.captest to break the circular dependency
+# between capdata.py and captest.py. Placing these after the CapData class
+# definition lets captest.py safely `from captest.capdata import CapData`
+# when it is loaded by this line.
+from captest.captest import (  # noqa: E402, F401
+    print_results,
+    highlight_pvals,
+    perc_wrap,
+)
 
 
 if __name__ == "__main__":

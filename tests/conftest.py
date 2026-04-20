@@ -4,6 +4,7 @@ import pandas as pd
 from captest import capdata as pvc
 from captest import util
 from captest import columngroups as cg
+from captest import CapTest, load_pvsyst
 
 
 @pytest.fixture
@@ -182,6 +183,123 @@ def capdata_irr():
     cd.data_filtered = df.copy()
     cd.column_groups = {"poa": ["poa1", "poa2", "poa3", "poa4"]}
     return cd
+
+
+# -- CapTest fixtures -----------------------------------------------------
+
+
+@pytest.fixture
+def meas_cd_default():
+    """Minimal measured CapData sourced from the existing example data.
+
+    Column groups are renamed so the shipped ``e2848_default`` preset matches
+    without extra overrides: ``real_pwr_mtr``, ``irr_poa``, ``temp_amb``,
+    ``wind_speed``. A synthetic ``irr_rpoa`` group is added (scaled fraction
+    of the POA sensors) so the ``bifi_e2848_etotal`` and ``bifi_power_tc``
+    presets also resolve against this fixture without additional wiring.
+    """
+    cd = pvc.CapData("meas")
+    df = pd.read_csv(
+        "./tests/data/example_measured_data.csv",
+        index_col=0,
+        parse_dates=True,
+    )
+    # Synthesize rear-POA irradiance as a fraction of the front-POA sensors.
+    # Real rpoa is typically 10-20% of front POA for bifacial sites; 15%
+    # keeps the test fixture in a realistic range without requiring a new
+    # data file.
+    df["met1_rpoa"] = df["met1_poa_pyranometer"] * 0.15
+    df["met2_rpoa"] = df["met2_poa_pyranometer"] * 0.15
+    cd.data = df
+    cd.data_filtered = cd.data.copy(deep=True)
+    cd.column_groups = cg.ColumnGroups(
+        {
+            "real_pwr_mtr": ["meter_power"],
+            "irr_poa": ["met1_poa_pyranometer", "met2_poa_pyranometer"],
+            "irr_rpoa": ["met1_rpoa", "met2_rpoa"],
+            "temp_amb": ["met1_amb_temp", "met2_amb_temp"],
+            "wind_speed": ["met1_windspeed", "met2_windspeed"],
+        }
+    )
+    return cd
+
+
+@pytest.fixture
+def sim_cd_default():
+    """Minimal modeled CapData loaded from the shipped PVsyst example.
+
+    Synthetic ``GlobBak`` and ``BackShd`` columns are added so presets that
+    rely on ``rpoa_pvsyst(globbak=..., backshd=...)`` (``bifi_e2848_etotal``,
+    ``bifi_power_tc``) resolve without needing a new PVsyst export.
+    """
+    cd = load_pvsyst(path="./tests/data/pvsyst_example_HourlyRes_2.CSV")
+    cd.data["GlobBak"] = cd.data["GlobInc"] * 0.15
+    cd.data["BackShd"] = 0.0
+    cd.data_filtered = cd.data.copy(deep=True)
+    return cd
+
+
+@pytest.fixture
+def ct_default(meas_cd_default, sim_cd_default):
+    """CapTest bound to both default CapData fixtures with setup() run."""
+    return CapTest.from_params(
+        test_setup="e2848_default",
+        meas=meas_cd_default,
+        sim=sim_cd_default,
+        ac_nameplate=6_000_000,
+        test_tolerance="- 4",
+    )
+
+
+@pytest.fixture
+def ct_etotal(meas_cd_default, sim_cd_default):
+    """CapTest for the bifi_e2848_etotal preset with setup() run."""
+    return CapTest.from_params(
+        test_setup="bifi_e2848_etotal",
+        meas=meas_cd_default,
+        sim=sim_cd_default,
+        ac_nameplate=6_000_000,
+        bifaciality=0.15,
+        test_tolerance="- 4",
+    )
+
+
+@pytest.fixture
+def ct_bifi_power_tc(meas_cd_default, sim_cd_default):
+    """CapTest for the bifi_power_tc preset with setup() run."""
+    return CapTest.from_params(
+        test_setup="bifi_power_tc",
+        meas=meas_cd_default,
+        sim=sim_cd_default,
+        ac_nameplate=6_000_000,
+        bifaciality=0.15,
+        power_temp_coeff=-0.32,
+        base_temp=25,
+        test_tolerance="- 4",
+    )
+
+
+@pytest.fixture
+def captest_yaml(tmp_path):
+    """Minimal yaml file exercising CapTest.from_yaml.
+
+    Writes a file at ``tmp_path / 'captest.yaml'`` with no data paths so
+    from_yaml does not try to load anything. Returns the path.
+    """
+    yaml_text = (
+        "captest:\n"
+        "  test_setup: e2848_default\n"
+        "  ac_nameplate: 6000000\n"
+        "  test_tolerance: '- 4'\n"
+        "  min_irr: 400\n"
+        "  max_irr: 1400\n"
+        "  fshdbm: 1.0\n"
+        "  hrs_req: 12.5\n"
+        "  bifaciality: 0.0\n"
+    )
+    path = tmp_path / "captest.yaml"
+    path.write_text(yaml_text)
+    return path
 
 
 @pytest.fixture

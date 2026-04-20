@@ -15,6 +15,11 @@ from captest.io import (
     DataLoader as DataLoader,
 )
 
+from captest.captest import (
+    CapTest as CapTest,
+    TEST_SETUPS as TEST_SETUPS,
+)
+
 try:
     from importlib.metadata import version
 

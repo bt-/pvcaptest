@@ -1,24 +1,29 @@
 """Unified test orchestrator and supporting utilities.
 
-This module houses the ``CapTest`` class (added in a later unit), the
-``TEST_SETUPS`` registry of named regression presets, and small formatting
-helpers used by ``CapTest`` methods that compare a measured + modeled pair of
-``CapData`` instances.
+This module houses the ``CapTest`` class, the ``TEST_SETUPS`` registry of
+named regression presets, and small formatting helpers used by ``CapTest``
+methods that compare a measured + modeled pair of ``CapData`` instances.
 
-The module is intentionally light on imports at module scope to avoid any
-circular dependency with ``captest.capdata``. Any function that needs a
-``CapData`` instance accepts it as an argument rather than importing the class.
+The module imports ``CapData`` at module scope. This works despite the
+circular relationship with ``captest.capdata`` because ``capdata.py`` only
+triggers ``captest.py`` to load at the very END of its body (after
+``CapData`` has been fully defined). Any function that does NOT need
+``CapData`` at class-creation time should still accept it as an argument to
+keep the coupling narrow.
 """
 
 import copy
 import difflib
 import importlib.util
+import warnings
 from pathlib import Path
 
 import numpy as np
+import param
 import yaml
 
 from captest import util
+from captest.capdata import CapData
 from captest.calcparams import (
     bom_temp,
     cell_temp,
@@ -530,8 +535,593 @@ def _suggest_unknown_key(unknown, known):
     return f" Did you mean {matches[0]!r}?" if matches else ""
 
 
+# --- CapTest class --------------------------------------------------------
+
+# Keys of ``captest.captest.CapTest`` params that may appear directly under the
+# yaml captest sub-mapping. Used by ``from_yaml`` for unknown-key detection.
+_CAPTEST_YAML_KEYS = frozenset(
+    {
+        "test_setup",
+        "reg_fml",
+        "reg_cols_meas",
+        "reg_cols_sim",
+        "rep_conditions",
+        "rep_cond_source",
+        "sim_days",
+        "shade_filter_start",
+        "shade_filter_end",
+        "ac_nameplate",
+        "test_tolerance",
+        "min_irr",
+        "max_irr",
+        "clipping_irr",
+        "rep_irr_filter",
+        "fshdbm",
+        "irrad_stability",
+        "irrad_stability_threshold",
+        "hrs_req",
+        "bifaciality",
+        "power_temp_coeff",
+        "base_temp",
+        "meas_load_kwargs",
+        "sim_load_kwargs",
+        "meas_path",
+        "sim_path",
+        "overrides",
+    }
+)
+
+# Keys that may appear under the ``overrides`` sub-mapping.
+_CAPTEST_OVERRIDE_KEYS = frozenset(
+    {"reg_cols_meas", "reg_cols_sim", "reg_fml", "rep_conditions"}
+)
+
+
+def _default_meas_loader():
+    """Return the default measured-data loader (``captest.io.load_data``).
+
+    Imported lazily so that callers who construct ``CapTest`` without
+    supplying a ``meas_path`` do not need the ``io`` submodule and its
+    transitive dependencies loaded.
+    """
+    from captest.io import load_data
+
+    return load_data
+
+
+def _default_sim_loader():
+    """Return the default modeled-data loader (``captest.io.load_pvsyst``).
+
+    Lazy-imported for the same reason as ``_default_meas_loader``.
+    """
+    from captest.io import load_pvsyst
+
+    return load_pvsyst
+
+
+class CapTest(param.Parameterized):
+    """Config + state container for an ASTM E2848 capacity test.
+
+    ``CapTest`` binds a measured ``CapData`` and a modeled ``CapData`` to a
+    named regression preset from ``TEST_SETUPS`` and holds all test-level
+    configuration in one place. It is intentionally a config + state
+    container rather than a runner: users still invoke
+    ``ct.meas.filter_*(...)``, ``ct.meas.rep_cond(...)``, and
+    ``ct.meas.fit_regression()`` by hand.
+
+    Typical workflows
+    -----------------
+    1. Programmatic::
+
+        ct = CapTest.from_params(
+            test_setup="e2848_default",
+            meas=meas_cd,
+            sim=sim_cd,
+            ac_nameplate=125_000,
+            test_tolerance="- 4",
+        )
+        # ``from_params`` runs ``setup()`` automatically because both meas
+        # and sim were supplied as pre-built CapData instances.
+
+    2. From a yaml file::
+
+        ct = CapTest.from_yaml("./config.yaml")
+
+    3. Bare + manual::
+
+        ct = CapTest(test_setup="bifi_e2848_etotal", bifaciality=0.15)
+        ct.meas = my_meas_cd
+        ct.sim = my_sim_cd
+        ct.setup()
+
+    Parameters
+    ----------
+    meas : CapData or None
+        Measured-data ``CapData`` instance. Assigned via ``from_params``,
+        ``from_yaml``, or directly.
+    sim : CapData or None
+        Modeled-data ``CapData`` instance.
+    test_setup : str
+        Key into ``TEST_SETUPS`` or the literal ``"custom"``. Default
+        ``"e2848_default"``.
+    reg_fml : str or None
+        If set, overrides the preset's regression formula at ``setup()``.
+    reg_cols_meas : dict or None
+        If set, overrides the preset's measured ``regression_cols`` dict.
+    reg_cols_sim : dict or None
+        If set, overrides the preset's modeled ``regression_cols`` dict.
+    rep_conditions : dict or None
+        If set, partial-merged onto the preset's ``rep_conditions`` at
+        ``setup()``. Top-level keys replace; the nested ``func`` dict is
+        merged one level deep so users can override only a single
+        variable's aggregation.
+    rep_cond_source : {"meas", "sim"}
+        Which ``CapData.rc`` is used by ``captest_results``. Default
+        ``"meas"``.
+    sim_days : int
+        Days of simulated data used for the test. Default 30.
+    shade_filter_start, shade_filter_end : str or None
+        ``"HH:MM"`` between-time strings for shade filtering.
+    ac_nameplate : float or None
+        Nameplate AC power in watts.
+    test_tolerance : str
+        Tolerance string forwarded to pass/fail logic. Default ``"- 4"``.
+    min_irr, max_irr, clipping_irr : float
+        Irradiance filter bounds (W/m^2).
+    rep_irr_filter : float
+        Fractional reporting-irradiance filter band in ``[0, 1]``.
+    fshdbm : float
+        Shade filter threshold in ``[0, 1]``.
+    irrad_stability : {"std", "filter_clearsky", "contract"}
+        Irradiance stability strategy.
+    irrad_stability_threshold : float
+        Threshold value for ``irrad_stability``.
+    hrs_req : float
+        Hours of data required for a complete test. Default 12.5.
+    bifaciality, power_temp_coeff, base_temp : float
+        Calc-params scalars propagated onto both ``CapData`` instances at
+        ``setup()``. See ``_downstream_attrs``.
+    meas_loader, sim_loader : callable or None
+        Programmatic-only data-loader callables. Default resolution when
+        ``None``: ``captest.io.load_data`` and ``captest.io.load_pvsyst``
+        respectively. Not serialized to yaml.
+    meas_load_kwargs, sim_load_kwargs : dict or None
+        Plain-dict kwargs splatted into the loaders.
+
+    Attributes
+    ----------
+    _resolved_setup : dict or None
+        The fully-resolved ``TEST_SETUPS`` entry after ``setup()`` has run.
+        Plain instance attribute (not a ``param.*``) so ``setup()`` can be
+        called multiple times.
+
+    Notes
+    -----
+    The lhs key of the regression formula is always ``"power"`` across
+    shipped presets, even when the formula regresses a derived quantity
+    (e.g. temperature-corrected power).
+    """
+
+    # --- parameter declarations ------------------------------------------
+
+    # Bound CapData instances
+    meas = param.ClassSelector(
+        class_=CapData, default=None, doc="Measured CapData instance."
+    )
+    sim = param.ClassSelector(
+        class_=CapData, default=None, doc="Modeled CapData instance."
+    )
+
+    # Regression setup
+    test_setup = param.String(
+        default="e2848_default",
+        doc="Key into TEST_SETUPS or the literal 'custom'.",
+    )
+    reg_fml = param.String(
+        default=None,
+        allow_None=True,
+        doc="If set, overrides the preset regression formula.",
+    )
+    reg_cols_meas = param.Dict(
+        default=None,
+        allow_None=True,
+        doc="If set, overrides the preset measured regression_cols dict.",
+    )
+    reg_cols_sim = param.Dict(
+        default=None,
+        allow_None=True,
+        doc="If set, overrides the preset modeled regression_cols dict.",
+    )
+    rep_conditions = param.Dict(
+        default=None,
+        allow_None=True,
+        doc="If set, partial-merged onto the preset rep_conditions at setup().",
+    )
+    rep_cond_source = param.Selector(
+        objects=["meas", "sim"],
+        default="meas",
+        doc="Which CapData.rc is used by captest_results.",
+    )
+
+    # Test scope / time
+    sim_days = param.Integer(
+        default=30,
+        bounds=(1, 365),
+        doc="Days of simulated data used for the test.",
+    )
+    shade_filter_start = param.String(
+        default=None,
+        allow_None=True,
+        doc="HH:MM start time for between-time shade filtering.",
+    )
+    shade_filter_end = param.String(
+        default=None,
+        allow_None=True,
+        doc="HH:MM end time for between-time shade filtering.",
+    )
+
+    # Measurement / nameplate
+    ac_nameplate = param.Number(
+        default=None,
+        allow_None=True,
+        doc="Nameplate AC power in W.",
+    )
+    test_tolerance = param.String(
+        default="- 4",
+        doc="Tolerance string forwarded to pass/fail logic.",
+    )
+
+    # Filter parameters
+    min_irr = param.Number(default=400, doc="Minimum POA irradiance (W/m^2).")
+    max_irr = param.Number(default=1400, doc="Maximum POA irradiance (W/m^2).")
+    clipping_irr = param.Number(
+        default=1000, doc="POA irradiance threshold for clipping filter (W/m^2)."
+    )
+    rep_irr_filter = param.Number(
+        default=0.2,
+        bounds=(0.0, 1.0),
+        doc="Fractional reporting-irradiance filter band.",
+    )
+    fshdbm = param.Number(
+        default=1.0,
+        bounds=(0.0, 1.0),
+        doc="Shade filter threshold (fraction).",
+    )
+    irrad_stability = param.Selector(
+        objects=["std", "filter_clearsky", "contract"],
+        default="std",
+        doc="Irradiance stability strategy.",
+    )
+    irrad_stability_threshold = param.Number(
+        default=30,
+        doc="Threshold value for irradiance stability.",
+    )
+    hrs_req = param.Number(
+        default=12.5,
+        doc="Hours of data required for a complete test.",
+    )
+
+    # Calc-params scalars propagated to both CapData instances at setup().
+    bifaciality = param.Number(
+        default=0.0,
+        bounds=(0.0, 1.0),
+        doc="Bifaciality factor propagated onto both CapData instances.",
+    )
+    power_temp_coeff = param.Number(
+        default=-0.32,
+        doc="Power temperature coefficient (percent per degree C).",
+    )
+    base_temp = param.Number(
+        default=25,
+        doc="Base temperature for temperature correction (deg C).",
+    )
+
+    # Data-loader injection (programmatic-only; never serialized to yaml).
+    meas_loader = param.Callable(
+        default=None,
+        allow_None=True,
+        doc="Callable used to build meas from meas_path. Defaults to load_data.",
+    )
+    meas_load_kwargs = param.Dict(
+        default=None,
+        allow_None=True,
+        doc="Extra kwargs splatted into meas_loader.",
+    )
+    sim_loader = param.Callable(
+        default=None,
+        allow_None=True,
+        doc="Callable used to build sim from sim_path. Defaults to load_pvsyst.",
+    )
+    sim_load_kwargs = param.Dict(
+        default=None,
+        allow_None=True,
+        doc="Extra kwargs splatted into sim_loader.",
+    )
+
+    # Class-level tuple of param names to copy onto both CapData instances
+    # during setup(). Extending is a one-line edit.
+    _downstream_attrs = ("bifaciality", "power_temp_coeff", "base_temp")
+
+    def __init__(self, **kwargs):  # noqa: D107
+        super().__init__(**kwargs)
+        # Plain instance attr rather than a param.* so setup() can be re-run.
+        self._resolved_setup = None
+
+    # --- constructors ----------------------------------------------------
+
+    @classmethod
+    def from_params(cls, **kwargs):
+        """Construct a CapTest from parameter kwargs.
+
+        Recognizes the non-param kwargs ``meas``, ``sim``, ``meas_path``,
+        ``sim_path`` in addition to every declared ``param.*``. If both
+        ``meas`` and ``meas_path`` are supplied the pre-built instance
+        wins and a warning is emitted (same for ``sim`` / ``sim_path``).
+
+        When both ``meas`` and ``sim`` end up populated, ``setup()`` is
+        called automatically. Otherwise the partially-initialized instance
+        is returned and the caller finishes the workflow manually.
+
+        Parameters
+        ----------
+        **kwargs
+            Any declared CapTest parameter, plus ``meas``, ``sim``,
+            ``meas_path``, ``sim_path``.
+
+        Returns
+        -------
+        CapTest
+        """
+        meas = kwargs.pop("meas", None)
+        sim = kwargs.pop("sim", None)
+        meas_path = kwargs.pop("meas_path", None)
+        sim_path = kwargs.pop("sim_path", None)
+
+        inst = cls(**kwargs)
+
+        # Resolve loaders lazily so tests don't need the io module unless
+        # they actually load data from paths.
+        def _meas_loader():
+            return inst.meas_loader or _default_meas_loader()
+
+        def _sim_loader():
+            return inst.sim_loader or _default_sim_loader()
+
+        # Wire up meas.
+        if meas is not None and meas_path is not None:
+            warnings.warn(
+                "Both 'meas' and 'meas_path' supplied; using the pre-built "
+                "meas CapData and ignoring meas_path.",
+                stacklevel=2,
+            )
+            inst.meas = meas
+        elif meas is not None:
+            inst.meas = meas
+        elif meas_path is not None:
+            load_kwargs = inst.meas_load_kwargs or {}
+            inst.meas = _meas_loader()(meas_path, **load_kwargs)
+
+        # Wire up sim.
+        if sim is not None and sim_path is not None:
+            warnings.warn(
+                "Both 'sim' and 'sim_path' supplied; using the pre-built "
+                "sim CapData and ignoring sim_path.",
+                stacklevel=2,
+            )
+            inst.sim = sim
+        elif sim is not None:
+            inst.sim = sim
+        elif sim_path is not None:
+            load_kwargs = inst.sim_load_kwargs or {}
+            inst.sim = _sim_loader()(sim_path, **load_kwargs)
+
+        if inst.meas is not None and inst.sim is not None:
+            inst.setup()
+
+        return inst
+
+    @classmethod
+    def from_yaml(cls, path, key="captest"):
+        """Construct a CapTest from a yaml config file.
+
+        Reads the sub-mapping at the given top-level ``key`` of the yaml
+        file. Relative ``meas_path`` and ``sim_path`` values are resolved
+        against ``path.parent`` so yaml files can ship alongside data.
+
+        Parameters
+        ----------
+        path : str or Path
+            Path to a yaml file.
+        key : str, default 'captest'
+            Top-level key whose value is the CapTest sub-mapping.
+
+        Returns
+        -------
+        CapTest
+        """
+        path = Path(path)
+        sub = load_config(path, key=key)
+
+        # Unknown-key detection with Levenshtein suggestion.
+        for k in sub:
+            if k not in _CAPTEST_YAML_KEYS:
+                suggestion = _suggest_unknown_key(k, _CAPTEST_YAML_KEYS)
+                raise ValueError(
+                    f"Unknown key {k!r} under the {key!r} sub-mapping.{suggestion}"
+                )
+        overrides = sub.get("overrides") or {}
+        if not isinstance(overrides, dict):
+            raise ValueError("'overrides' must be a mapping.")
+        for k in overrides:
+            if k not in _CAPTEST_OVERRIDE_KEYS:
+                suggestion = _suggest_unknown_key(k, _CAPTEST_OVERRIDE_KEYS)
+                raise ValueError(f"Unknown key {k!r} under 'overrides'.{suggestion}")
+
+        if "test_setup" not in sub:
+            raise ValueError(f"'test_setup' is required under the {key!r} sub-mapping.")
+
+        # Conflicting reg_fml at the top-level and under overrides.
+        if sub.get("reg_fml") is not None and overrides.get("reg_fml") is not None:
+            raise ValueError(
+                "'reg_fml' cannot be set both at the captest top-level and "
+                "under 'overrides'; pick one."
+            )
+
+        kwargs = {k: v for k, v in sub.items() if k != "overrides"}
+
+        # Lift override keys into direct kwargs.
+        for k in _CAPTEST_OVERRIDE_KEYS:
+            if overrides.get(k) is not None:
+                kwargs[k] = overrides[k]
+
+        # 'custom' setup requires the three regression overrides.
+        if kwargs.get("test_setup") == "custom":
+            for req in ("reg_cols_meas", "reg_cols_sim", "reg_fml"):
+                if kwargs.get(req) is None:
+                    raise ValueError(
+                        f"test_setup='custom' requires overrides.{req} to be set."
+                    )
+
+        # Resolve relative paths against the yaml file's directory.
+        base_dir = path.parent
+        for path_key in ("meas_path", "sim_path"):
+            val = kwargs.get(path_key)
+            if val is not None:
+                val_path = Path(val)
+                if not val_path.is_absolute():
+                    kwargs[path_key] = str(base_dir / val_path)
+
+        # ``null`` (None) in yaml is equivalent to omitting the key.
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
+
+        return cls.from_params(**kwargs)
+
+    # --- workflow methods ------------------------------------------------
+
+    def setup(self, verbose=True):
+        """Resolve TEST_SETUPS, propagate scalars, process regression cols.
+
+        Raises ``RuntimeError`` if ``meas`` or ``sim`` is unset. Assigns the
+        resolved TEST_SETUPS entry to ``self._resolved_setup`` and returns
+        ``self`` for fluent chaining.
+
+        Parameters
+        ----------
+        verbose : bool, default True
+            Forwarded to ``CapData.process_regression_columns``.
+
+        Returns
+        -------
+        CapTest
+            ``self``, for fluent chaining.
+        """
+        if self.meas is None:
+            raise RuntimeError("CapTest.meas must be set before setup().")
+        if self.sim is None:
+            raise RuntimeError("CapTest.sim must be set before setup().")
+
+        # Build the overrides dict for resolve_test_setup. Only non-None
+        # values are passed through so named-preset resolution falls back to
+        # the preset's defaults for keys the user hasn't overridden.
+        overrides = {}
+        for name in ("reg_cols_meas", "reg_cols_sim", "reg_fml", "rep_conditions"):
+            val = getattr(self, name)
+            if val is not None:
+                overrides[name] = val
+
+        resolved = resolve_test_setup(self.test_setup, overrides=overrides)
+        self._resolved_setup = resolved
+
+        # Propagate scalar calc-params onto both CapData instances.
+        for name in self._downstream_attrs:
+            setattr(self.meas, name, getattr(self, name))
+            setattr(self.sim, name, getattr(self, name))
+
+        # Wire per-CapData regression state. Deepcopy the regression_cols
+        # dict because process_regression_columns mutates it in place.
+        self.meas.regression_cols = copy.deepcopy(resolved["reg_cols_meas"])
+        self.sim.regression_cols = copy.deepcopy(resolved["reg_cols_sim"])
+        self.meas.regression_formula = resolved["reg_fml"]
+        self.sim.regression_formula = resolved["reg_fml"]
+        self.meas.tolerance = self.test_tolerance
+        self.sim.tolerance = self.test_tolerance
+
+        # Run process_regression_columns on both. This also resets
+        # data_filtered to data.copy() so any prior filter state is
+        # dropped (intended behavior per the design spec).
+        self.meas.process_regression_columns(verbose=verbose)
+        self.sim.process_regression_columns(verbose=verbose)
+
+        return self
+
+    def scatter_plots(self, which="meas", **kwargs):
+        """Call the resolved preset's ``scatter_plots`` callable.
+
+        Parameters
+        ----------
+        which : {'meas', 'sim'}
+            Which CapData instance to plot.
+        **kwargs
+            Forwarded to the preset's scatter callable.
+
+        Returns
+        -------
+        hv.Layout
+        """
+        cd = self._pick_cd(which)
+        self._require_setup()
+        return self._resolved_setup["scatter_plots"](cd, **kwargs)
+
+    def rep_cond(self, which="meas", **overrides):
+        """Call ``cd.rep_cond`` with the resolved preset's rep_conditions.
+
+        The preset's ``rep_conditions`` dict (after any ``self.rep_conditions``
+        overrides from ``setup()``) is used as the default kwargs. ``overrides``
+        is partial-merged on top: top-level keys replace, the nested ``func``
+        dict merges one level deep.
+
+        Parameters
+        ----------
+        which : {'meas', 'sim'}
+            Which CapData instance's ``rep_cond`` to call.
+        **overrides
+            Partial-merged onto the resolved ``rep_conditions`` dict.
+
+        Returns
+        -------
+        None
+            ``cd.rep_cond`` writes to ``cd.rc``.
+        """
+        cd = self._pick_cd(which)
+        self._require_setup()
+        resolved_rc = _merge_rep_conditions(
+            self._resolved_setup["rep_conditions"], overrides
+        )
+        return cd.rep_cond(**resolved_rc)
+
+    # --- internal helpers ------------------------------------------------
+
+    def _require_setup(self):
+        if self._resolved_setup is None:
+            raise RuntimeError("CapTest.setup() must be called first.")
+
+    def _pick_cd(self, which):
+        if which == "meas":
+            return self.meas
+        if which == "sim":
+            return self.sim
+        raise ValueError(f"which must be 'meas' or 'sim'; got {which!r}.")
+
+    @property
+    def resolved_setup(self):
+        """Return the resolved TEST_SETUPS entry or raise if setup() not run."""
+        self._require_setup()
+        return self._resolved_setup
+
+
 # Silence ruff F401: these are public API; re-imported by `capdata.py`.
 __all__ = [
+    "CapTest",
     "TEST_SETUPS",
     "highlight_pvals",
     "load_config",
