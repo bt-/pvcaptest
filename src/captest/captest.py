@@ -476,6 +476,45 @@ def _resolve_func_strings(func_dict):
     return {key: _resolve_perc_string(val) for key, val in func_dict.items()}
 
 
+def _perc_wrap_to_string(val):
+    """Inverse of :func:`_resolve_perc_string`.
+
+    Converts a callable produced by :func:`perc_wrap` back into its
+    round-trippable ``"perc_N"`` string form. Non-perc_wrap values pass
+    through unchanged.
+    """
+    if not callable(val):
+        return val
+    name = getattr(val, "__name__", "")
+    prefix = "perc_wrap("
+    if name.startswith(prefix) and name.endswith(")"):
+        inner = name[len(prefix) : -1]
+        try:
+            int(inner)
+        except ValueError:
+            return val
+        return f"perc_{inner}"
+    return val
+
+
+def _serialize_rep_conditions(rc):
+    """Return a yaml-safe copy of a ``rep_conditions`` dict.
+
+    Recursively walks the dict; ``func`` sub-dict values that are
+    ``perc_wrap(N)`` callables are converted to ``"perc_N"`` strings so the
+    dict survives a yaml.safe_dump round-trip.
+    """
+    if not isinstance(rc, dict):
+        return rc
+    serialized = {}
+    for key, val in rc.items():
+        if key == "func" and isinstance(val, dict):
+            serialized[key] = {k: _perc_wrap_to_string(v) for k, v in val.items()}
+        else:
+            serialized[key] = copy.deepcopy(val)
+    return serialized
+
+
 def load_config(path, key="captest"):
     """Load and lightly validate the captest sub-mapping from a yaml file.
 
@@ -851,6 +890,12 @@ class CapTest(param.Parameterized):
         super().__init__(**kwargs)
         # Plain instance attr rather than a param.* so setup() can be re-run.
         self._resolved_setup = None
+        # Construction-time paths. Not ``param.*`` because they are strings
+        # that only matter for ``to_yaml`` round-trip; tracking them here
+        # lets ``from_params``/``from_yaml`` remember what paths the class
+        # was built from without cluttering the param surface.
+        self._meas_path = None
+        self._sim_path = None
 
     # --- constructors ----------------------------------------------------
 
@@ -883,6 +928,8 @@ class CapTest(param.Parameterized):
         sim_path = kwargs.pop("sim_path", None)
 
         inst = cls(**kwargs)
+        inst._meas_path = meas_path
+        inst._sim_path = sim_path
 
         # Resolve loaders lazily so tests don't need the io module unless
         # they actually load data from paths.
@@ -999,7 +1046,162 @@ class CapTest(param.Parameterized):
         # ``null`` (None) in yaml is equivalent to omitting the key.
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
 
-        return cls.from_params(**kwargs)
+        inst = cls.from_params(**kwargs)
+        # Preserve the raw relative-or-absolute paths the user wrote in the
+        # yaml so a later ``to_yaml`` round-trips them. ``from_params``
+        # overwrites ``_meas_path``/``_sim_path`` with the resolved absolute
+        # paths; restore the original literal values here.
+        raw_meas_path = sub.get("meas_path")
+        raw_sim_path = sub.get("sim_path")
+        if raw_meas_path is not None:
+            inst._meas_path = raw_meas_path
+        if raw_sim_path is not None:
+            inst._sim_path = raw_sim_path
+        return inst
+
+    def to_yaml(self, path, key="captest", merge_into_existing=True):
+        """Serialize the curated CapTest configuration to a yaml file.
+
+        The written sub-mapping lives under the top-level ``key`` (default
+        ``"captest"``) and contains every scalar ``param.*`` plus
+        ``test_setup``, any non-None override of ``reg_fml`` /
+        ``reg_cols_meas`` / ``reg_cols_sim`` / ``rep_conditions``,
+        ``meas_path`` / ``sim_path`` (when the instance was constructed from
+        paths), and non-empty ``meas_load_kwargs`` / ``sim_load_kwargs``.
+
+        Percentile ``perc_wrap(N)`` callables inside
+        ``rep_conditions['func']`` are written back as ``"perc_N"`` strings
+        so that ``from_yaml`` round-trips them. ``meas``, ``sim``,
+        ``regression_results``, ``_resolved_setup``, and the loader
+        callables are never serialized.
+
+        Parameters
+        ----------
+        path : str or Path
+            Destination yaml file.
+        key : str, default 'captest'
+            Top-level key under which the captest sub-mapping is written.
+            Parametrizing this lets a single yaml hold multiple captest
+            flavors (e.g. ``captest_e2848`` and ``captest_bifi``).
+        merge_into_existing : bool, default True
+            When True and the destination file already exists and parses as
+            a mapping, preserve the other top-level keys and overwrite only
+            the sub-tree at ``key``. When False, the destination is
+            unconditionally replaced with a fresh mapping containing only
+            ``key``.
+
+        Returns
+        -------
+        None
+        """
+        path = Path(path)
+
+        # Warn once for any non-yaml-serializable user overrides.
+        unserializable = []
+        if self.meas_loader is not None:
+            unserializable.append("meas_loader")
+        if self.sim_loader is not None:
+            unserializable.append("sim_loader")
+        if self._resolved_setup is not None and self.test_setup != "custom":
+            preset_scatter = TEST_SETUPS.get(self.test_setup, {}).get("scatter_plots")
+            current_scatter = self._resolved_setup.get("scatter_plots")
+            if (
+                preset_scatter is not None
+                and current_scatter is not None
+                and current_scatter is not preset_scatter
+            ):
+                unserializable.append("scatter_plots")
+        if unserializable:
+            warnings.warn(
+                "The following CapTest attributes are programmatic-only and "
+                "will be omitted from the yaml file: "
+                f"{sorted(unserializable)}",
+                stacklevel=2,
+            )
+
+        sub = self._build_yaml_sub_mapping()
+
+        # Merge with an existing file on disk when requested.
+        root_doc = {}
+        if merge_into_existing and path.exists():
+            try:
+                with path.open("r") as fh:
+                    existing = yaml.safe_load(fh)
+                if isinstance(existing, dict):
+                    root_doc = existing
+            except (OSError, yaml.YAMLError):  # pragma: no cover - rare IO/parse
+                root_doc = {}
+        root_doc[key] = sub
+
+        with path.open("w") as fh:
+            yaml.safe_dump(root_doc, fh, sort_keys=False)
+
+    def _build_yaml_sub_mapping(self):
+        """Build the dict written under ``key:`` by :meth:`to_yaml`.
+
+        Kept separate from ``to_yaml`` so it is testable in isolation and
+        so the merge/write step stays short.
+        """
+        sub = {"test_setup": self.test_setup}
+
+        # Paths are written only when the instance was constructed from
+        # paths; we remember the raw (possibly relative) string in
+        # ``_meas_path``/``_sim_path``.
+        if self._meas_path is not None:
+            sub["meas_path"] = str(self._meas_path)
+        if self._sim_path is not None:
+            sub["sim_path"] = str(self._sim_path)
+
+        # Overrides sub-mapping.
+        preset = TEST_SETUPS.get(self.test_setup, {})
+        overrides = {}
+        if self.test_setup == "custom":
+            # ``custom`` has no preset; always include whatever the user set.
+            for name in ("reg_cols_meas", "reg_cols_sim", "reg_fml"):
+                val = getattr(self, name)
+                if val is not None:
+                    overrides[name] = copy.deepcopy(val)
+        else:
+            for name in ("reg_cols_meas", "reg_cols_sim", "reg_fml"):
+                val = getattr(self, name)
+                if val is not None and val != preset.get(name):
+                    overrides[name] = copy.deepcopy(val)
+        if self.rep_conditions is not None:
+            overrides["rep_conditions"] = _serialize_rep_conditions(self.rep_conditions)
+        if overrides:
+            sub["overrides"] = overrides
+
+        # Remaining scalar params (always written).
+        scalar_names = (
+            "rep_cond_source",
+            "ac_nameplate",
+            "test_tolerance",
+            "sim_days",
+            "shade_filter_start",
+            "shade_filter_end",
+            "min_irr",
+            "max_irr",
+            "clipping_irr",
+            "rep_irr_filter",
+            "fshdbm",
+            "irrad_stability",
+            "irrad_stability_threshold",
+            "hrs_req",
+            "bifaciality",
+            "power_temp_coeff",
+            "base_temp",
+        )
+        for name in scalar_names:
+            sub[name] = getattr(self, name)
+
+        # Loader kwargs are plain dicts; only write when non-empty so a
+        # default-constructed CapTest produces a clean yaml.
+        if self.meas_load_kwargs:
+            sub["meas_load_kwargs"] = copy.deepcopy(self.meas_load_kwargs)
+        if self.sim_load_kwargs:
+            sub["sim_load_kwargs"] = copy.deepcopy(self.sim_load_kwargs)
+
+        return sub
 
     # --- workflow methods ------------------------------------------------
 

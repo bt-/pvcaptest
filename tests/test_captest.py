@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 
 from captest import CapTest, captest as ct
 from captest.calcparams import e_total, power_temp_correct
@@ -957,3 +958,302 @@ class TestPortedMethods:
         capt = CapTest()
         with pytest.raises(RuntimeError, match="meas"):
             capt.residual_plot()
+
+
+# --- to_yaml / round-trip / key parametrization --------------------------
+
+
+class TestToYamlAndRoundTrip:
+    """Serialization of CapTest state to yaml and round-trip through yaml."""
+
+    def _load(self, path):
+        with open(path, "r") as fh:
+            return yaml.safe_load(fh)
+
+    def test_to_yaml_writes_curated_scalar_set(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        capt = CapTest(
+            test_setup="e2848_default",
+            ac_nameplate=125_000,
+            test_tolerance="- 4",
+            bifaciality=0.12,
+        )
+        capt.to_yaml(p, merge_into_existing=False)
+        doc = self._load(p)
+        sub = doc["captest"]
+        # Scalar params round-trip.
+        assert sub["test_setup"] == "e2848_default"
+        assert sub["ac_nameplate"] == 125_000
+        assert sub["test_tolerance"] == "- 4"
+        assert sub["bifaciality"] == 0.12
+        # ``meas``, ``sim``, and loader callables are never written.
+        for forbidden in ("meas", "sim", "meas_loader", "sim_loader"):
+            assert forbidden not in sub
+
+    def test_to_yaml_omits_paths_when_not_constructed_from_paths(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        capt = CapTest(test_setup="e2848_default")
+        capt.to_yaml(p, merge_into_existing=False)
+        sub = self._load(p)["captest"]
+        assert "meas_path" not in sub
+        assert "sim_path" not in sub
+
+    def test_to_yaml_writes_paths_when_constructed_from_paths(
+        self, tmp_path, meas_cd_default, sim_cd_default
+    ):
+        def fake_loader(path, **kwargs):
+            # Any pre-built CapData is fine; we're only testing path
+            # round-trip.
+            return meas_cd_default
+
+        p = tmp_path / "cfg.yaml"
+        capt = CapTest.from_params(
+            test_setup="e2848_default",
+            meas_path="/some/meas/path.csv",
+            meas_loader=fake_loader,
+            sim_path="/some/sim/path.csv",
+            sim_loader=fake_loader,
+        )
+        with pytest.warns(UserWarning, match=r"meas_loader"):
+            capt.to_yaml(p, merge_into_existing=False)
+        sub = self._load(p)["captest"]
+        assert sub["meas_path"] == "/some/meas/path.csv"
+        assert sub["sim_path"] == "/some/sim/path.csv"
+
+    def test_to_yaml_omits_overrides_when_user_did_not_set_them(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        capt = CapTest(test_setup="e2848_default")
+        capt.to_yaml(p, merge_into_existing=False)
+        sub = self._load(p)["captest"]
+        assert "overrides" not in sub
+
+    def test_to_yaml_writes_overrides_when_user_set_them(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        capt = CapTest(
+            test_setup="e2848_default",
+            reg_fml="power ~ poa + I(poa * poa) + I(poa * t_amb) + I(poa * w_vel)",
+        )
+        capt.to_yaml(p, merge_into_existing=False)
+        sub = self._load(p)["captest"]
+        assert "overrides" in sub
+        assert sub["overrides"]["reg_fml"].startswith("power ~ poa")
+
+    def test_to_yaml_omits_reg_fml_override_equal_to_preset(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        preset_fml = ct.TEST_SETUPS["e2848_default"]["reg_fml"]
+        capt = CapTest(test_setup="e2848_default", reg_fml=preset_fml)
+        capt.to_yaml(p, merge_into_existing=False)
+        sub = self._load(p)["captest"]
+        assert "overrides" not in sub
+
+    def test_to_yaml_writes_load_kwargs_only_when_non_empty(self, tmp_path):
+        p_empty = tmp_path / "empty.yaml"
+        capt_empty = CapTest(test_setup="e2848_default")
+        capt_empty.to_yaml(p_empty, merge_into_existing=False)
+        sub_empty = self._load(p_empty)["captest"]
+        assert "meas_load_kwargs" not in sub_empty
+        assert "sim_load_kwargs" not in sub_empty
+
+        p_full = tmp_path / "full.yaml"
+        capt_full = CapTest(
+            test_setup="e2848_default",
+            meas_load_kwargs={"sep": ";"},
+            sim_load_kwargs={"egrid_unit_adj_factor": 1000},
+        )
+        capt_full.to_yaml(p_full, merge_into_existing=False)
+        sub_full = self._load(p_full)["captest"]
+        assert sub_full["meas_load_kwargs"] == {"sep": ";"}
+        assert sub_full["sim_load_kwargs"] == {"egrid_unit_adj_factor": 1000}
+
+    def test_to_yaml_round_trip(self, tmp_path):
+        yaml_src = (
+            "captest:\n"
+            "  test_setup: e2848_default\n"
+            "  ac_nameplate: 6000000\n"
+            "  test_tolerance: '- 4'\n"
+            "  overrides:\n"
+            "    rep_conditions:\n"
+            "      percent_filter: 15\n"
+            "      func:\n"
+            "        poa: perc_55\n"
+            "        t_amb: mean\n"
+            "        w_vel: mean\n"
+        )
+        p1 = tmp_path / "cfg1.yaml"
+        p1.write_text(yaml_src)
+        capt = CapTest.from_yaml(p1)
+        p2 = tmp_path / "cfg2.yaml"
+        capt.to_yaml(p2, merge_into_existing=False)
+        doc1 = self._load(p1)["captest"]
+        doc2 = self._load(p2)["captest"]
+        # Round-trip preserves test_setup and the nameplate/tolerance scalars.
+        assert doc2["test_setup"] == doc1["test_setup"]
+        assert doc2["ac_nameplate"] == doc1["ac_nameplate"]
+        assert doc2["test_tolerance"] == doc1["test_tolerance"]
+        # Override rep_conditions round-trips; perc_wrap(55) -> 'perc_55'.
+        assert (
+            doc2["overrides"]["rep_conditions"]["percent_filter"]
+            == doc1["overrides"]["rep_conditions"]["percent_filter"]
+        )
+        assert (
+            doc2["overrides"]["rep_conditions"]["func"]["poa"]
+            == doc1["overrides"]["rep_conditions"]["func"]["poa"]
+            == "perc_55"
+        )
+        # A second from_yaml on the written file succeeds.
+        capt2 = CapTest.from_yaml(p2)
+        assert capt2.ac_nameplate == 6_000_000
+
+    def test_to_yaml_warns_when_scatter_plots_is_user_mutated(
+        self, tmp_path, ct_default
+    ):
+        p = tmp_path / "cfg.yaml"
+
+        def my_custom_scatter(cd, **kwargs):
+            return None
+
+        ct_default._resolved_setup["scatter_plots"] = my_custom_scatter
+        with pytest.warns(UserWarning, match="scatter_plots"):
+            ct_default.to_yaml(p, merge_into_existing=False)
+        # Written yaml contains no scatter_plots key.
+        sub = self._load(p)["captest"]
+        assert "scatter_plots" not in sub
+        assert "overrides" not in sub or "scatter_plots" not in sub.get("overrides", {})
+
+    def test_to_yaml_warns_when_loader_callable_set(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+
+        def fake_loader(path, **kwargs):
+            return None
+
+        capt = CapTest(test_setup="e2848_default", meas_loader=fake_loader)
+        with pytest.warns(UserWarning, match="meas_loader"):
+            capt.to_yaml(p, merge_into_existing=False)
+
+
+class TestYamlPercShorthand:
+    """perc_N string shorthand round-trips through from_yaml / to_yaml."""
+
+    def test_perc_N_string_converts_to_perc_wrap_on_from_yaml(self, tmp_path):
+        yaml_src = (
+            "captest:\n"
+            "  test_setup: e2848_default\n"
+            "  overrides:\n"
+            "    rep_conditions:\n"
+            "      func:\n"
+            "        poa: perc_55\n"
+            "        t_amb: mean\n"
+            "        w_vel: mean\n"
+        )
+        p = tmp_path / "cfg.yaml"
+        p.write_text(yaml_src)
+        capt = CapTest.from_yaml(p)
+        func = capt.rep_conditions["func"]
+        assert func["t_amb"] == "mean"
+        # The resolved poa value is a callable equivalent to perc_wrap(55).
+        sample = pd.Series(np.arange(100))
+        assert func["poa"](sample) == ct.perc_wrap(55)(sample)
+
+    def test_to_yaml_emits_perc_N_for_perc_wrap(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        capt = CapTest(
+            test_setup="e2848_default",
+            rep_conditions={
+                "percent_filter": 20,
+                "func": {
+                    "poa": ct.perc_wrap(65),
+                    "t_amb": "mean",
+                    "w_vel": "mean",
+                },
+            },
+        )
+        capt.to_yaml(p, merge_into_existing=False)
+        doc = yaml.safe_load(p.read_text())
+        func_dict = doc["captest"]["overrides"]["rep_conditions"]["func"]
+        assert func_dict["poa"] == "perc_65"
+        assert func_dict["t_amb"] == "mean"
+        assert func_dict["w_vel"] == "mean"
+
+    def test_invalid_perc_string_raises_on_from_yaml(self, tmp_path):
+        yaml_src = (
+            "captest:\n"
+            "  test_setup: e2848_default\n"
+            "  overrides:\n"
+            "    rep_conditions:\n"
+            "      func:\n"
+            "        poa: perc_bogus\n"
+        )
+        p = tmp_path / "cfg.yaml"
+        p.write_text(yaml_src)
+        with pytest.raises(ValueError, match="perc_<int>"):
+            CapTest.from_yaml(p)
+
+
+class TestYamlKeyParametrization:
+    """``key=`` parametrizes the top-level mapping for multi-flavor yaml files."""
+
+    def test_from_yaml_reads_under_captest_key_by_default(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        p.write_text("captest:\n  test_setup: bifi_e2848_etotal\n  ac_nameplate: 1\n")
+        capt = CapTest.from_yaml(p)
+        assert capt.test_setup == "bifi_e2848_etotal"
+        assert capt.ac_nameplate == 1
+
+    def test_from_yaml_reads_under_custom_key(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        p.write_text(
+            "captest_bifi:\n  test_setup: bifi_e2848_etotal\n  ac_nameplate: 2\n"
+        )
+        capt = CapTest.from_yaml(p, key="captest_bifi")
+        assert capt.test_setup == "bifi_e2848_etotal"
+        assert capt.ac_nameplate == 2
+
+    def test_from_yaml_missing_key_lists_available_keys(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        p.write_text("captest_alt:\n  test_setup: e2848_default\n")
+        with pytest.raises(KeyError, match="captest_alt"):
+            CapTest.from_yaml(p)  # default key='captest' not present
+
+    def test_to_yaml_writes_under_custom_key(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        capt = CapTest(test_setup="e2848_default")
+        capt.to_yaml(p, key="captest_bifi", merge_into_existing=False)
+        doc = yaml.safe_load(p.read_text())
+        assert "captest_bifi" in doc
+        assert "captest" not in doc
+        assert doc["captest_bifi"]["test_setup"] == "e2848_default"
+
+    def test_to_yaml_merge_into_existing_preserves_other_top_level_keys(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        # Pre-populate with project-level keys plus an orthogonal captest
+        # sub-map.
+        p.write_text(
+            "client: barnhart\n"
+            "loc:\n"
+            "  latitude: 42.28\n"
+            "  longitude: -84.65\n"
+            "captest:\n"
+            "  test_setup: e2848_default\n"
+            "  ac_nameplate: 10\n"
+        )
+        capt = CapTest(test_setup="bifi_e2848_etotal", ac_nameplate=20)
+        capt.to_yaml(p, key="captest_bifi", merge_into_existing=True)
+        doc = yaml.safe_load(p.read_text())
+        # Other top-level keys preserved.
+        assert doc["client"] == "barnhart"
+        assert doc["loc"] == {"latitude": 42.28, "longitude": -84.65}
+        # Original captest sub-map untouched.
+        assert doc["captest"]["test_setup"] == "e2848_default"
+        assert doc["captest"]["ac_nameplate"] == 10
+        # New captest_bifi sub-map written.
+        assert doc["captest_bifi"]["test_setup"] == "bifi_e2848_etotal"
+        assert doc["captest_bifi"]["ac_nameplate"] == 20
+
+    def test_to_yaml_merge_false_overwrites_existing_file(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        p.write_text("unrelated_key: keep_me\n")
+        capt = CapTest(test_setup="e2848_default")
+        capt.to_yaml(p, merge_into_existing=False)
+        doc = yaml.safe_load(p.read_text())
+        assert "unrelated_key" not in doc
+        assert "captest" in doc
