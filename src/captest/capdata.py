@@ -1,12 +1,12 @@
 """
 Provides the CapData class and supporting functions.
 
-The CapData class provides methods for loading, filtering, and regressing solar
-data.  A capacity test following the ASTM standard can be performed using a
-CapData object for the measured data and a seperate CapData object for the
-modeled data. The get_summary and captest_results functions accept two CapData
-objects as arguments and provide a summary of the data filtering steps and
-the results of the capacity test, respectively.
+The CapData class provides methods for loading, filtering, and regressing
+solar data. A capacity test following the ASTM E2848 standard is orchestrated
+by ``captest.CapTest``, which binds a measured and a modeled ``CapData``
+instance together and exposes the cross-CapData comparison methods
+(``captest_results``, ``get_summary``, ``overlay_scatters``,
+``residual_plot``, ``determine_pass_or_fail``).
 """
 
 # standard library imports
@@ -1134,74 +1134,6 @@ def csky(time_source, loc=None, sys=None, concat=True, output="both"):
         return csky_df
 
 
-def get_summary(*args):
-    """
-    Return summary dataframe of filtering steps for multiple CapData objects.
-
-    See documentation for the CapData.get_summary method for additional
-    details.
-    """
-    summaries = [cd.get_summary() for cd in args]
-    return pd.concat(summaries)
-
-
-def pick_attr(sim, das, name):
-    """Check for conflict between attributes of two CapData objects."""
-    sim_attr = getattr(sim, name)
-    das_attr = getattr(das, name)
-    if sim_attr is None and das_attr is None:
-        warn_str = "{} must be set for either sim or das".format(name)
-        return warnings.warn(warn_str)
-    elif sim_attr is None and das_attr is not None:
-        return (das_attr, "das")
-    elif sim_attr is not None and das_attr is None:
-        return (sim_attr, "sim")
-    elif sim_attr is not None and das_attr is not None:
-        warn_str = "{} found for sim and das set {} to None for one of the two".format(
-            name, name
-        )
-        return warnings.warn(warn_str)
-
-
-def determine_pass_or_fail(cap_ratio, tolerance, nameplate):
-    """
-    Determine a pass/fail result from a capacity ratio and test tolerance.
-
-    Parameters
-    ----------
-    cap_ratio : float
-        Ratio of the measured data regression result to the simulated data
-        regression result.
-    tolerance : str
-        String representing error band.  Ex. '+/- 3' or '- 5'
-        There must be space between the sign and number. Number is
-        interpreted as a percent.  For example, 5 percent is 5 not 0.05.
-    nameplate : numeric
-        Nameplate rating of the PV plant.
-
-    Returns
-    -------
-    tuple of boolean and string
-        True for a passing test and false for a failing test.
-        Limits for passing and failing test.
-    """
-    sign = tolerance.split(sep=" ")[0]
-    error = float(tolerance.split(sep=" ")[1]) / 100
-
-    nameplate_plus_error = nameplate * (1 + error)
-    nameplate_minus_error = nameplate * (1 - error)
-
-    if sign == "+/-" or sign == "-/+":
-        return (
-            round(np.abs(1 - cap_ratio), ndigits=6) <= error,
-            str(nameplate_minus_error) + ", " + str(nameplate_plus_error),
-        )
-    elif sign == "-":
-        return (cap_ratio >= 1 - error, str(nameplate_minus_error) + ", None")
-    else:
-        warnings.warn("Sign must be '-', '+/-', or '-/+'.")
-
-
 def predict_with_pvalue_check(cd, rc=None, pval_threshold=0.05):
     """
     Make prediction with optional p-value filtering of coefficients.
@@ -1243,157 +1175,6 @@ def predict_with_pvalue_check(cd, rc=None, pval_threshold=0.05):
     return results.model.predict(modified_params, exog)[0]
 
 
-def captest_results(
-    sim, das, nameplate, tolerance, check_pvalues=False, pval=0.05, print_res=True
-):
-    """
-    Print a summary indicating if system passed or failed capacity test.
-
-    NOTE: Method will try to adjust for 1000x differences in units.
-
-    Parameters
-    ----------
-    sim : CapData
-        CapData object for simulated data.
-    das : CapData
-        CapData object for measured data.
-    nameplate : numeric
-        Nameplate rating of the PV plant.
-    tolerance : str
-        String representing error band.  Ex. +/- 3', '- 5'
-        There must be space between the sign and number. Number is
-        interpreted as a percent.  For example, 5 percent is 5 not 0.05.
-    check_pvalues : boolean, default False
-        Set to true to check p values for each coefficient.  If p values is
-        greater than pval, then the coefficient is set to zero.
-    pval : float, default 0.05
-        p value to use as cutoff.  Regresion coefficients with a p value
-        greater than pval will be set to zero.
-    print_res : boolean, default True
-        Set to False to prevent printing results.
-
-    Returns
-    -------
-    Capacity test ratio - the capacity calculated from the reporting conditions
-    and the measured data divided by the capacity calculated from the reporting
-    conditions and the simulated data.
-    """
-    if sim.regression_formula != das.regression_formula:
-        return warnings.warn("CapData objects do not have the same regression formula.")
-
-    rc_result = pick_attr(sim, das, "rc")
-    if print_res:
-        print("Using reporting conditions from {}. \n".format(rc_result[1]))
-    rc = rc_result[0]
-
-    # Use predict_with_pvalue_check for consistent behavior across pandas versions
-    pval_threshold = pval if check_pvalues else None
-    actual = predict_with_pvalue_check(das, rc=rc, pval_threshold=pval_threshold)
-    expected = predict_with_pvalue_check(sim, rc=rc, pval_threshold=pval_threshold)
-    cap_ratio = actual / expected
-    if cap_ratio < 0.01:
-        cap_ratio *= 1000
-        actual *= 1000
-        warnings.warn(
-            "Capacity ratio and actual capacity multiplied by 1000"
-            " because the capacity ratio was less than 0.01."
-        )
-    capacity = nameplate * cap_ratio
-
-    if print_res:
-        test_passed = determine_pass_or_fail(cap_ratio, tolerance, nameplate)
-        print_results(
-            test_passed, expected, actual, cap_ratio, capacity, test_passed[1]
-        )
-
-    return cap_ratio
-
-
-def captest_results_check_pvalues(
-    sim, das, nameplate, tolerance, print_res=False, **kwargs
-):
-    """
-    Print a summary of the capacity test results.
-
-    Capacity ratio is the capacity calculated from the reporting conditions
-    and the measured data divided by the capacity calculated from the reporting
-    conditions and the simulated data.
-
-    The tolerance is applied to the capacity test ratio to determine if the
-    test passes or fails.
-
-    Parameters
-    ----------
-    sim : CapData
-        CapData object for simulated data.
-    das : CapData
-        CapData object for measured data.
-    nameplate : numeric
-        Nameplate rating of the PV plant.
-    tolerance : str
-        String representing error band.  Ex. '+ 3', '+/- 3', '- 5'
-        There must be space between the sign and number. Number is
-        interpreted as a percent.  For example, 5 percent is 5 not 0.05.
-    print_res : boolean, default True
-        Set to False to prevent printing results.
-    **kwargs
-        kwargs are passed to captest_results.  See documentation for
-        captest_results for options. check_pvalues is set in this method,
-        so do not pass again.
-
-    Prints:
-    Capacity ratio without setting parameters with high p-values to zero.
-    Capacity ratio after setting paramters with high p-values to zero.
-    P-values for simulated and measured regression coefficients.
-    Regression coefficients (parameters) for simulated and measured data.
-    """
-    das_pvals = das.regression_results.pvalues
-    sim_pvals = sim.regression_results.pvalues
-    das_params = das.regression_results.params
-    sim_params = sim.regression_results.params
-
-    df_pvals = pd.DataFrame([das_pvals, sim_pvals, das_params, sim_params])
-    df_pvals = df_pvals.transpose()
-    df_pvals.rename(
-        columns={0: "das_pvals", 1: "sim_pvals", 2: "das_params", 3: "sim_params"},
-        inplace=True,
-    )
-
-    cap_ratio = captest_results(
-        sim,
-        das,
-        nameplate,
-        tolerance,
-        print_res=print_res,
-        check_pvalues=False,
-        **kwargs,
-    )
-    cap_ratio_check_pvalues = captest_results(
-        sim,
-        das,
-        nameplate,
-        tolerance,
-        print_res=print_res,
-        check_pvalues=True,
-        **kwargs,
-    )
-
-    cap_ratio_rounded = np.round(cap_ratio, decimals=4) * 100
-    cap_ratio_check_pvalues_rounded = (
-        np.round(cap_ratio_check_pvalues, decimals=4) * 100
-    )
-
-    result_str = "{:.3f}% - Cap Ratio"
-    print(result_str.format(cap_ratio_rounded))
-
-    result_str_pval_check = "{:.3f}% - Cap Ratio after pval check"
-    print(result_str_pval_check.format(cap_ratio_check_pvalues_rounded))
-
-    return df_pvals.style.format("{:20,.5f}").apply(
-        highlight_pvals, subset=["das_pvals", "sim_pvals"]
-    )
-
-
 def run_test(cd, steps):
     """
     Apply a list of capacity test steps to a given CapData object.
@@ -1416,39 +1197,6 @@ def run_test(cd, steps):
     """
     for step in steps:
         step[0](cd, *step[1], **step[2])
-
-
-def overlay_scatters(measured, expected, expected_label="PVsyst"):
-    """
-    Plot labeled overlay scatter of final filtered measured and simulated data.
-
-    Parameters
-    ----------
-    measured : Overlay
-        Holoviews overlay scatter plot produced from CapData object used to
-        calculate reporting conditions.
-    expected : Overlay
-        Holoviews overlay scatter plot produced from CapData object not used to
-        calculate reporting conditions.
-    rcs_from_meas : bool
-        If rest was run calculating reporting conditions from measured or
-        simulated data.
-
-    Returns
-    -------
-    Overlay scatter plot of remaining data after filtering from measured and
-    simulated data.
-    """
-    meas_last_filter_scatter = getattr(
-        measured.Scatter, measured.Scatter.children[-1]
-    ).relabel("Measured")
-    exp_last_filter_scatter = getattr(
-        expected.Scatter, expected.Scatter.children[-1]
-    ).relabel(expected_label)
-    overlay = (meas_last_filter_scatter * exp_last_filter_scatter).opts(
-        hv.opts.Overlay(legend_position="right")
-    )
-    return overlay
 
 
 def index_capdata(capdata, label, filtered=True):
@@ -3710,17 +3458,6 @@ class CapData(object):
                 if hasattr(self, key):
                     kwargs[key] = getattr(self, key)
         self.data[result] = func(self.data, *args, **kwargs)
-
-
-# Deferred imports from captest.captest to break the circular dependency
-# between capdata.py and captest.py. Placing these after the CapData class
-# definition lets captest.py safely `from captest.capdata import CapData`
-# when it is loaded by this line.
-from captest.captest import (  # noqa: E402, F401
-    print_results,
-    highlight_pvals,
-    perc_wrap,
-)
 
 
 if __name__ == "__main__":

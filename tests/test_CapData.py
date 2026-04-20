@@ -15,9 +15,11 @@ import pvlib
 import panel as pn
 
 from captest import capdata as pvc
+from captest import captest as captest_module
 from captest import columngroups as cg
 from captest import io
 from captest import (
+    CapTest,
     load_pvsyst,
     calcparams,
 )
@@ -73,7 +75,7 @@ class TestTopLevelFuncs(unittest.TestCase):
         bool_array = []
         for val in rng:
             np_perc = np.percentile(rng, val, method="nearest")
-            wrap_perc = df.agg(pvc.perc_wrap(val)).values[0]
+            wrap_perc = df.agg(captest_module.perc_wrap(val)).values[0]
             bool_array.append(np_perc == wrap_perc)
         self.assertTrue(
             all(bool_array), "np.percentile wrapper gives different value than np perc"
@@ -342,55 +344,59 @@ class TestTopLevelFuncs(unittest.TestCase):
 
     def test_determine_pass_or_fail(self):
         # Tolerance band around 100%
+        ct_pm = CapTest(test_tolerance="+/- 4", ac_nameplate=100)
         self.assertTrue(
-            pvc.determine_pass_or_fail(0.96, "+/- 4", 100)[0],
+            ct_pm.determine_pass_or_fail(0.96)[0],
             "Should pass, cp ratio equals bottom of tolerance.",
         )
         self.assertTrue(
-            pvc.determine_pass_or_fail(0.97, "+/- 4", 100)[0],
+            ct_pm.determine_pass_or_fail(0.97)[0],
             "Should pass, cp ratio above bottom of tolerance.",
         )
         self.assertTrue(
-            pvc.determine_pass_or_fail(1.03, "+/- 4", 100)[0],
+            ct_pm.determine_pass_or_fail(1.03)[0],
             "Should pass, cp ratio below top of tolerance.",
         )
         self.assertTrue(
-            pvc.determine_pass_or_fail(1.04, "+/- 4", 100)[0],
+            ct_pm.determine_pass_or_fail(1.04)[0],
             "Should pass, cp ratio equals top of tolerance.",
         )
         self.assertFalse(
-            pvc.determine_pass_or_fail(0.959, "+/- 4", 100)[0],
+            ct_pm.determine_pass_or_fail(0.959)[0],
             "Should fail, cp ratio below bottom of tolerance.",
         )
         self.assertFalse(
-            pvc.determine_pass_or_fail(1.041, "+/- 4", 100)[0],
+            ct_pm.determine_pass_or_fail(1.041)[0],
             "Should fail, cp ratio above top of tolerance.",
         )
         # Tolerance below 100%
+        ct_minus = CapTest(test_tolerance="- 4", ac_nameplate=100)
         self.assertTrue(
-            pvc.determine_pass_or_fail(0.96, "- 4", 100)[0],
+            ct_minus.determine_pass_or_fail(0.96)[0],
             "Should pass, cp ratio equals bottom of tolerance.",
         )
         self.assertTrue(
-            pvc.determine_pass_or_fail(0.97, "- 4", 100)[0],
+            ct_minus.determine_pass_or_fail(0.97)[0],
             "Should pass, cp ratio above bottom of tolerance.",
         )
         self.assertTrue(
-            pvc.determine_pass_or_fail(1.04, "- 4", 100)[0],
+            ct_minus.determine_pass_or_fail(1.04)[0],
             "Should pass, cp ratio above bottom of tolerance.",
         )
         self.assertFalse(
-            pvc.determine_pass_or_fail(0.959, "- 4", 100)[0],
+            ct_minus.determine_pass_or_fail(0.959)[0],
             "Should fail, cp ratio below bottom of tolerance.",
         )
         # test fractional tolerance
+        ct_frac = CapTest(test_tolerance="- 4.5", ac_nameplate=100)
         self.assertTrue(
-            pvc.determine_pass_or_fail(0.956, "- 4.5", 100)[0],
+            ct_frac.determine_pass_or_fail(0.956)[0],
             "Should pass, cp ratio above bottom of tolerance.",
         )
         # warn on incorrect tolerance spec
+        ct_bad = CapTest(test_tolerance="+ 4", ac_nameplate=100)
         with self.assertWarns(UserWarning):
-            pvc.determine_pass_or_fail(1.04, "+ 4", 100)
+            ct_bad.determine_pass_or_fail(1.04)
 
     @pytest.fixture(autouse=True)
     def _pass_fixtures(self, capsys):
@@ -404,7 +410,7 @@ class TestTopLevelFuncs(unittest.TestCase):
         test_CapData.py::TestTopLevelFuncs::test_print_results_pass'
         """
         test_passed = (True, "950, 1050")
-        pvc.print_results(test_passed, 1000, 970, 0.97, 970, test_passed[1])
+        captest_module.print_results(test_passed, 1000, 970, 0.97, 970, test_passed[1])
         captured = self.capsys.readouterr()
 
         results_str = (
@@ -426,7 +432,7 @@ class TestTopLevelFuncs(unittest.TestCase):
         test_CapData.py::TestTopLevelFuncs::test_print_results_pass'
         """
         test_passed = (False, "950, 1050")
-        pvc.print_results(test_passed, 1000, 940, 0.94, 940, test_passed[1])
+        captest_module.print_results(test_passed, 1000, 940, 0.94, 940, test_passed[1])
         captured = self.capsys.readouterr()
 
         results_str = (
@@ -1968,7 +1974,13 @@ class TestRepCondNoFreq:
 
     def test_custom_func_dict(self, nrel):
         """Passing a func dict overrides the mean default per rhs variable."""
-        nrel.rep_cond(func={"poa": pvc.perc_wrap(60), "t_amb": "mean", "w_vel": "mean"})
+        nrel.rep_cond(
+            func={
+                "poa": captest_module.perc_wrap(60),
+                "t_amb": "mean",
+                "w_vel": "mean",
+            }
+        )
         assert isinstance(nrel.rc, pd.core.frame.DataFrame)
 
 
@@ -2602,7 +2614,10 @@ class TestCapTestCpResultsSingleCoeff(unittest.TestCase):
         self.sim.data_filtered = pd.DataFrame()
 
     def test_return(self):
-        res = pvc.captest_results(self.sim, self.meas, 100, "+/- 5", print_res=False)
+        ct = CapTest(test_tolerance="+/- 5", ac_nameplate=100)
+        ct.meas = self.meas
+        ct.sim = self.sim
+        res = ct.captest_results(print_res=False)
 
         self.assertIsInstance(res, float, "Returned value is not a tuple")
 
@@ -2653,10 +2668,12 @@ class TestCapTestCpResultsMultCoeffKwVsW(unittest.TestCase):
         expected = sim.regression_results.predict(meas.rc)[0]
         cp_rat_test_val = actual / expected
 
+        ct = CapTest(test_tolerance="+/- 5", ac_nameplate=100)
+        ct.meas = meas
+        ct.sim = sim
+
         with self.assertWarns(UserWarning):
-            cp_rat = pvc.captest_results(
-                sim, meas, 100, "+/- 5", check_pvalues=False, print_res=False
-            )
+            cp_rat = ct.captest_results(check_pvalues=False, print_res=False)
 
         self.assertAlmostEqual(
             cp_rat, cp_rat_test_val, 6, "captest_results did not return expected value."
@@ -2753,14 +2770,20 @@ class TestCapTestCpResultsMultCoeff(unittest.TestCase):
             "SIM prediction should change when poa coeff set to 0",
         )
 
+    def _build_ct(self):
+        """Helper returning a CapTest configured with the setUp meas/sim."""
+        ct = CapTest(test_tolerance="+/- 5", ac_nameplate=100)
+        ct.meas = self.meas
+        ct.sim = self.sim
+        return ct
+
     def test_pvals_default_false(self):
         actual = self.meas.regression_results.predict(self.meas.rc)[0]
         expected = self.sim.regression_results.predict(self.meas.rc)[0]
         cp_rat_test_val = actual / expected
 
-        cp_rat = pvc.captest_results(
-            self.sim, self.meas, 100, "+/- 5", check_pvalues=False, print_res=False
-        )
+        ct = self._build_ct()
+        cp_rat = ct.captest_results(check_pvalues=False, print_res=False)
 
         self.assertEqual(
             cp_rat, cp_rat_test_val, "captest_results did not return expected value."
@@ -2772,22 +2795,15 @@ class TestCapTestCpResultsMultCoeff(unittest.TestCase):
         With pval=1e-15, the 'poa' coefficient should be zeroed because its
         p-value is > 1e-15, which changes the prediction.
         """
+        ct = self._build_ct()
         # Get ratio without p-value check
-        cp_rat_no_check = pvc.captest_results(
-            self.sim,
-            self.meas,
-            100,
-            "+/- 5",
+        cp_rat_no_check = ct.captest_results(
             check_pvalues=False,
             print_res=False,
         )
 
         # Get ratio with p-value check (pval=1e-15 zeros poa coefficient)
-        cp_rat_with_check = pvc.captest_results(
-            self.sim,
-            self.meas,
-            100,
-            "+/- 5",
+        cp_rat_with_check = ct.captest_results(
             check_pvalues=True,
             pval=1e-15,
             print_res=False,
@@ -2815,20 +2831,20 @@ class TestCapTestCpResultsMultCoeff(unittest.TestCase):
         """
         self.maxDiff = 10_000
 
-        pvc.captest_results(
-            self.sim,
-            self.meas,
-            100,
-            "+/- 5",
+        ct = self._build_ct()
+        ct.captest_results(
             check_pvalues=True,
             pval=1e-15,
             print_res=True,
         )
         captured = self.capsys.readouterr()
 
-        # Expected output when poa coefficient is zeroed due to p-value check
+        # Expected output when poa coefficient is zeroed due to p-value check.
+        # CapTest picks reporting conditions from ``rep_cond_source`` (default
+        # 'meas'), so the output says "from meas." instead of the legacy
+        # module-level "from das.".
         results_str = (
-            "Using reporting conditions from das. \n\n"
+            "Using reporting conditions from meas. \n\n"
             "Capacity Test Result:    FAIL\n"
             "Modeled test output:          66.451\n"
             "Actual test output:           72.429\n"
@@ -2847,8 +2863,12 @@ class TestCapTestCpResultsMultCoeff(unittest.TestCase):
 
         sim.regression_formula = "power ~ poa + I(poa * poa) + I(poa * t_amb) - 1"
 
+        ct = CapTest(test_tolerance="+/- 5", ac_nameplate=100)
+        ct.meas = das
+        ct.sim = sim
+
         with self.assertWarns(UserWarning):
-            pvc.captest_results(sim, das, 100, "+/- 5", check_pvalues=True)
+            ct.captest_results(check_pvalues=True)
 
 
 class TestGetFilteringTable:

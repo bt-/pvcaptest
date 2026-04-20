@@ -1,15 +1,19 @@
 """Unified test orchestrator and supporting utilities.
 
 This module houses the ``CapTest`` class, the ``TEST_SETUPS`` registry of
-named regression presets, and small formatting helpers used by ``CapTest``
-methods that compare a measured + modeled pair of ``CapData`` instances.
+named regression presets, and small formatting helpers (``print_results``,
+``highlight_pvals``, ``perc_wrap``) consumed by ``CapTest`` methods that
+compare a measured + modeled pair of ``CapData`` instances.
 
-The module imports ``CapData`` at module scope. This works despite the
-circular relationship with ``captest.capdata`` because ``capdata.py`` only
-triggers ``captest.py`` to load at the very END of its body (after
-``CapData`` has been fully defined). Any function that does NOT need
-``CapData`` at class-creation time should still accept it as an argument to
-keep the coupling narrow.
+Import direction
+----------------
+At module-import time the dependency is one-way only:
+``captest.captest`` -> ``captest.capdata``. ``CapData`` is imported here at
+module scope so ``CapTest`` can declare ``meas``/``sim`` as
+``param.ClassSelector(class_=CapData)``. ``captest.capdata`` does NOT import
+anything from this module at import time; the single-CapData helper
+``predict_with_pvalue_check`` is imported lazily from within
+``CapTest.captest_results``.
 """
 
 import copy
@@ -19,6 +23,7 @@ import warnings
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import param
 import yaml
 
@@ -1099,11 +1104,263 @@ class CapTest(param.Parameterized):
         )
         return cd.rep_cond(**resolved_rc)
 
+    # --- ported cross-CapData methods ------------------------------------
+
+    def determine_pass_or_fail(self, cap_ratio):
+        """Determine a pass/fail result from a capacity ratio.
+
+        Uses ``self.test_tolerance`` and ``self.ac_nameplate``. Replaces the
+        pre-CapTest module-level ``capdata.determine_pass_or_fail``.
+
+        Parameters
+        ----------
+        cap_ratio : float
+            Ratio of the measured-data regression result to the modeled-data
+            regression result.
+
+        Returns
+        -------
+        tuple of (bool, str)
+            Pass/fail flag and the tolerance bounds string.
+        """
+        sign = self.test_tolerance.split(sep=" ")[0]
+        error = float(self.test_tolerance.split(sep=" ")[1]) / 100
+
+        nameplate_plus_error = self.ac_nameplate * (1 + error)
+        nameplate_minus_error = self.ac_nameplate * (1 - error)
+
+        if sign in ("+/-", "-/+"):
+            return (
+                round(np.abs(1 - cap_ratio), ndigits=6) <= error,
+                f"{nameplate_minus_error}, {nameplate_plus_error}",
+            )
+        if sign == "-":
+            return (cap_ratio >= 1 - error, f"{nameplate_minus_error}, None")
+        warnings.warn("Sign must be '-', '+/-', or '-/+'.")
+        return None
+
+    def captest_results(self, check_pvalues=False, pval=0.05, print_res=True):
+        """Compute the capacity test ratio for ``self.meas`` vs ``self.sim``.
+
+        Picks reporting conditions from ``self.meas.rc`` or ``self.sim.rc``
+        based on ``self.rep_cond_source``. Uses ``self.ac_nameplate`` for the
+        tested-capacity printout and ``self.test_tolerance`` (via
+        ``self.determine_pass_or_fail``) for the pass/fail result.
+
+        Parameters
+        ----------
+        check_pvalues : bool, default False
+            When True, coefficients with a p-value above ``pval`` are zeroed
+            before prediction.
+        pval : float, default 0.05
+            P-value cutoff used when ``check_pvalues`` is True.
+        print_res : bool, default True
+            When True, prints the formatted results.
+
+        Returns
+        -------
+        float
+            Capacity test ratio ``actual / expected``.
+        """
+        self._require_meas_and_sim()
+        if self.meas.regression_formula != self.sim.regression_formula:
+            return warnings.warn(
+                "CapData objects do not have the same regression formula."
+            )
+
+        if self.rep_cond_source == "meas":
+            rc = self.meas.rc
+        else:
+            rc = self.sim.rc
+
+        if print_res:
+            print(f"Using reporting conditions from {self.rep_cond_source}. \n")
+
+        # predict_with_pvalue_check is a single-CapData helper that stays in
+        # capdata.py. Imported lazily to avoid importing holoviews-heavy
+        # capdata internals at module-load time for callers that never
+        # compute cap ratios (e.g. notebooks that only use setup + plots).
+        from captest.capdata import predict_with_pvalue_check
+
+        pval_threshold = pval if check_pvalues else None
+        actual = predict_with_pvalue_check(
+            self.meas, rc=rc, pval_threshold=pval_threshold
+        )
+        expected = predict_with_pvalue_check(
+            self.sim, rc=rc, pval_threshold=pval_threshold
+        )
+        cap_ratio = actual / expected
+        if cap_ratio < 0.01:
+            cap_ratio *= 1000
+            actual *= 1000
+            warnings.warn(
+                "Capacity ratio and actual capacity multiplied by 1000"
+                " because the capacity ratio was less than 0.01."
+            )
+        capacity = self.ac_nameplate * cap_ratio
+
+        if print_res:
+            test_passed = self.determine_pass_or_fail(cap_ratio)
+            print_results(
+                test_passed, expected, actual, cap_ratio, capacity, test_passed[1]
+            )
+
+        return cap_ratio
+
+    def captest_results_check_pvalues(self, print_res=False, **kwargs):
+        """Compute cap ratio with and without p-value filtering.
+
+        Parameters
+        ----------
+        print_res : bool, default False
+            Forwarded to both internal ``captest_results`` calls.
+        **kwargs
+            Forwarded to ``captest_results``. Do not pass ``check_pvalues``;
+            this method sets it explicitly for each internal call.
+
+        Returns
+        -------
+        pandas.io.formats.style.Styler
+            Styled DataFrame with p-values and parameter values for both
+            ``self.meas`` and ``self.sim``. P-values >= 0.05 are highlighted.
+        """
+        self._require_meas_and_sim()
+        das_pvals = self.meas.regression_results.pvalues
+        sim_pvals = self.sim.regression_results.pvalues
+        das_params = self.meas.regression_results.params
+        sim_params = self.sim.regression_results.params
+
+        df_pvals = pd.DataFrame([das_pvals, sim_pvals, das_params, sim_params])
+        df_pvals = df_pvals.transpose()
+        df_pvals.rename(
+            columns={
+                0: "das_pvals",
+                1: "sim_pvals",
+                2: "das_params",
+                3: "sim_params",
+            },
+            inplace=True,
+        )
+
+        cap_ratio = self.captest_results(
+            print_res=print_res, check_pvalues=False, **kwargs
+        )
+        cap_ratio_check_pvalues = self.captest_results(
+            print_res=print_res, check_pvalues=True, **kwargs
+        )
+
+        cap_ratio_rounded = np.round(cap_ratio, decimals=4) * 100
+        cap_ratio_check_pvalues_rounded = (
+            np.round(cap_ratio_check_pvalues, decimals=4) * 100
+        )
+
+        print("{:.3f}% - Cap Ratio".format(cap_ratio_rounded))
+        print(
+            "{:.3f}% - Cap Ratio after pval check".format(
+                cap_ratio_check_pvalues_rounded
+            )
+        )
+
+        return df_pvals.style.format("{:20,.5f}").apply(
+            highlight_pvals, subset=["das_pvals", "sim_pvals"]
+        )
+
+    def get_summary(self):
+        """Concatenate ``self.meas.get_summary()`` and ``self.sim.get_summary()``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Filter history for both CapData instances, stacked.
+        """
+        self._require_meas_and_sim()
+        return pd.concat([self.meas.get_summary(), self.sim.get_summary()])
+
+    def overlay_scatters(self, expected_label="PVsyst"):
+        """Overlay the final scatter plot from ``self.meas`` and ``self.sim``.
+
+        Builds the scatter plot for each CapData instance via the resolved
+        preset's ``scatter_plots`` callable, then overlays the two first-panel
+        scatters with labels.
+
+        Parameters
+        ----------
+        expected_label : str, default "PVsyst"
+            Label used for the modeled-data scatter.
+
+        Returns
+        -------
+        hv.Overlay
+        """
+        if hv is None:
+            raise ImportError(
+                "holoviews is required for overlay_scatters. Install with "
+                "`uv add holoviews` or equivalent."
+            )
+        self._require_setup()
+        scatter_fn = self._resolved_setup["scatter_plots"]
+        meas_layout = scatter_fn(self.meas)
+        sim_layout = scatter_fn(self.sim)
+        # scatter_fn returns an hv.Layout whose first element is an hv.Scatter.
+        meas_scatter = list(meas_layout)[0].relabel("Measured")
+        sim_scatter = list(sim_layout)[0].relabel(expected_label)
+        overlay = (meas_scatter * sim_scatter).opts(
+            hv.opts.Overlay(legend_position="right")
+        )
+        return overlay
+
+    def residual_plot(self):
+        """Overlayed residual plots for ``self.meas`` and ``self.sim``.
+
+        Each regression exogenous variable gets its own panel showing the
+        residuals of both CapData instances overlaid. The single-CapData
+        helper ``plotting.get_resid_exog_frame`` stays where it is.
+
+        Returns
+        -------
+        hv.Layout
+        """
+        if hv is None:
+            raise ImportError(
+                "holoviews is required for residual_plot. Install with "
+                "`uv add holoviews` or equivalent."
+            )
+        self._require_meas_and_sim()
+        from captest.plotting import get_resid_exog_frame
+
+        meas_exog_names, meas_resid_exog = get_resid_exog_frame(self.meas)
+        _sim_exog_names, sim_resid_exog = get_resid_exog_frame(self.sim)
+
+        resid_plots = []
+        for exog_id in meas_exog_names:
+            meas_plot = (
+                hv.Scatter(meas_resid_exog, [exog_id], ["resid", "Timestamp", "source"])
+                .redim(x=exog_id)
+                .relabel(meas_resid_exog["source"][0])
+            )
+            sim_plot = (
+                hv.Scatter(sim_resid_exog, [exog_id], ["resid", "Timestamp", "source"])
+                .redim(x=exog_id)
+                .relabel(sim_resid_exog["source"][0])
+            )
+            resid_plots.append(meas_plot * sim_plot)
+
+        return hv.Layout(resid_plots).opts(
+            hv.opts.Overlay(width=500, height=500),
+            hv.opts.Scatter(tools=["hover"]),
+        )
+
     # --- internal helpers ------------------------------------------------
 
     def _require_setup(self):
         if self._resolved_setup is None:
             raise RuntimeError("CapTest.setup() must be called first.")
+
+    def _require_meas_and_sim(self):
+        if self.meas is None:
+            raise RuntimeError("CapTest.meas must be set.")
+        if self.sim is None:
+            raise RuntimeError("CapTest.sim must be set.")
 
     def _pick_cd(self, which):
         if which == "meas":

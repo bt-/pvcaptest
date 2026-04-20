@@ -771,3 +771,189 @@ class TestResolvedSetupProperty:
     def test_property_returns_resolved_dict(self, ct_default):
         resolved = ct_default.resolved_setup
         assert resolved is ct_default._resolved_setup
+
+
+# --- Cross-CapData methods ported from capdata module-level functions ----
+
+
+class TestPortedMethods:
+    """Tests for CapTest methods ported from the former module-level
+    ``capdata.captest_results``, ``captest_results_check_pvalues``,
+    ``determine_pass_or_fail``, ``get_summary``, ``overlay_scatters``, and
+    ``plotting.residual_plot``.
+    """
+
+    def _build_capdata_with_fit(self):
+        """Return a (meas, sim) pair with fitted regression results and rc."""
+        import statsmodels.formula.api as smf
+
+        np.random.seed(9876789)
+        nsample = 100
+        e = np.random.normal(size=nsample)
+        a = np.linspace(0, 10, nsample)
+        b = a / 2.0
+        c = a + 3.0
+
+        das_y = a + (a**2) + (a * b) + (a * c) + e
+        sim_y = a + (a**2 * 0.9) + (a * b * 1.1) + (a * c * 0.8) + e
+        das_df = pd.DataFrame({"power": das_y, "poa": a, "t_amb": b, "w_vel": c})
+        sim_df = pd.DataFrame({"power": sim_y, "poa": a, "t_amb": b, "w_vel": c})
+
+        from captest.capdata import CapData
+
+        meas = CapData("meas")
+        sim = CapData("sim")
+        meas.data = das_df
+        sim.data = sim_df
+        meas.data_filtered = das_df.copy()
+        sim.data_filtered = sim_df.copy()
+        meas.rc = pd.DataFrame({"poa": [6], "t_amb": [5], "w_vel": [3]})
+        sim.rc = pd.DataFrame({"poa": [6], "t_amb": [5], "w_vel": [3]})
+
+        fml = "power ~ poa + I(poa * poa) + I(poa * t_amb) + I(poa * w_vel) - 1"
+        meas.regression_results = smf.ols(formula=fml, data=das_df).fit()
+        sim.regression_results = smf.ols(formula=fml, data=sim_df).fit()
+        return meas, sim
+
+    def _build_ct(self):
+        meas, sim = self._build_capdata_with_fit()
+        capt = CapTest(test_tolerance="+/- 5", ac_nameplate=100)
+        capt.meas = meas
+        capt.sim = sim
+        return capt
+
+    def test_determine_pass_or_fail_uses_ct_attrs(self):
+        capt = CapTest(test_tolerance="+/- 4", ac_nameplate=100)
+        passed, bounds = capt.determine_pass_or_fail(0.96)
+        assert passed is True or passed == np.True_
+        assert bounds == "96.0, 104.0"
+
+    def test_determine_pass_or_fail_minus_sign(self):
+        capt = CapTest(test_tolerance="- 4", ac_nameplate=100)
+        passed, bounds = capt.determine_pass_or_fail(0.95)
+        # 0.95 is below 1 - 0.04 = 0.96, so this is a fail.
+        assert passed is False or passed == np.False_
+        assert bounds == "96.0, None"
+
+    def test_determine_pass_or_fail_warns_on_bad_sign(self):
+        capt = CapTest(test_tolerance="+ 4", ac_nameplate=100)
+        with pytest.warns(UserWarning, match=r"Sign must be"):
+            result = capt.determine_pass_or_fail(1.04)
+        assert result is None
+
+    def test_captest_results_requires_meas_and_sim(self):
+        capt = CapTest(test_tolerance="+/- 5", ac_nameplate=100)
+        with pytest.raises(RuntimeError, match="meas"):
+            capt.captest_results(print_res=False)
+
+    def test_captest_results_matches_direct_prediction(self):
+        capt = self._build_ct()
+        expected_actual = capt.meas.regression_results.predict(capt.meas.rc)[0]
+        expected_expected = capt.sim.regression_results.predict(capt.meas.rc)[0]
+        expected_ratio = expected_actual / expected_expected
+
+        cp_rat = capt.captest_results(print_res=False)
+
+        assert cp_rat == pytest.approx(expected_ratio, rel=1e-10)
+
+    def test_captest_results_uses_rep_cond_source_meas_by_default(self):
+        capt = self._build_ct()
+        # Set sim.rc to a different value; default rep_cond_source="meas"
+        # should keep the meas rc.
+        capt.sim.rc = pd.DataFrame({"poa": [99], "t_amb": [99], "w_vel": [99]})
+        expected_actual = capt.meas.regression_results.predict(capt.meas.rc)[0]
+        expected_expected = capt.sim.regression_results.predict(capt.meas.rc)[0]
+        expected_ratio = expected_actual / expected_expected
+
+        cp_rat = capt.captest_results(print_res=False)
+        assert cp_rat == pytest.approx(expected_ratio, rel=1e-10)
+
+    def test_captest_results_uses_rep_cond_source_sim(self):
+        capt = self._build_ct()
+        capt.rep_cond_source = "sim"
+        capt.sim.rc = pd.DataFrame({"poa": [8], "t_amb": [4], "w_vel": [2]})
+        expected_actual = capt.meas.regression_results.predict(capt.sim.rc)[0]
+        expected_expected = capt.sim.regression_results.predict(capt.sim.rc)[0]
+        expected_ratio = expected_actual / expected_expected
+
+        cp_rat = capt.captest_results(print_res=False)
+        assert cp_rat == pytest.approx(expected_ratio, rel=1e-10)
+
+    def test_captest_results_warns_on_mismatched_formulas(self):
+        capt = self._build_ct()
+        capt.sim.regression_formula = "power ~ poa + t_amb"
+        with pytest.warns(UserWarning, match="regression formula"):
+            capt.captest_results(print_res=False)
+
+    def test_captest_results_check_pvalues_returns_styled_df(self):
+        capt = self._build_ct()
+        styled = capt.captest_results_check_pvalues(print_res=False)
+        # Styler objects expose the underlying data via the .data attribute.
+        underlying = styled.data
+        assert isinstance(underlying, pd.DataFrame)
+        assert set(underlying.columns) == {
+            "das_pvals",
+            "sim_pvals",
+            "das_params",
+            "sim_params",
+        }
+
+    def test_get_summary_concatenates_meas_and_sim(
+        self, meas_cd_default, sim_cd_default
+    ):
+        capt = CapTest.from_params(
+            test_setup="e2848_default",
+            meas=meas_cd_default,
+            sim=sim_cd_default,
+            ac_nameplate=6_000_000,
+        )
+        # Apply a filter to each CapData so get_summary has rows.
+        capt.meas.filter_irr(200, 800)
+        capt.sim.filter_irr(200, 800)
+        combined = capt.get_summary()
+        assert isinstance(combined, pd.DataFrame)
+        # Combined summary has rows from both CapData instances.
+        names = combined.index.get_level_values(0).unique().tolist()
+        assert capt.meas.name in names
+        assert capt.sim.name in names
+
+    def test_get_summary_requires_meas_and_sim(self):
+        capt = CapTest()
+        with pytest.raises(RuntimeError, match="meas"):
+            capt.get_summary()
+
+    def test_overlay_scatters_requires_setup(self, meas_cd_default, sim_cd_default):
+        capt = CapTest()
+        capt.meas = meas_cd_default
+        capt.sim = sim_cd_default
+        with pytest.raises(RuntimeError, match="setup"):
+            capt.overlay_scatters()
+
+    def test_overlay_scatters_returns_overlay(self, ct_default):
+        import holoviews as hv
+
+        overlay = ct_default.overlay_scatters()
+        assert isinstance(overlay, hv.Overlay)
+
+    def test_overlay_scatters_uses_expected_label(self, ct_default):
+        overlay = ct_default.overlay_scatters(expected_label="My PVsyst")
+        # Both children of the overlay get labeled via .relabel; verify the
+        # second one (sim) got the custom label.
+        labels = [child.label for child in overlay]
+        assert "My PVsyst" in labels
+        assert "Measured" in labels
+
+    def test_residual_plot_returns_layout(self):
+        import holoviews as hv
+
+        capt = self._build_ct()
+        # residual_plot needs a .data_filtered index aligned with the fitted
+        # model's exog; the _build_capdata_with_fit helper uses the full data
+        # as data_filtered, so alignment holds.
+        layout = capt.residual_plot()
+        assert isinstance(layout, hv.Layout)
+
+    def test_residual_plot_requires_meas_and_sim(self):
+        capt = CapTest()
+        with pytest.raises(RuntimeError, match="meas"):
+            capt.residual_plot()
