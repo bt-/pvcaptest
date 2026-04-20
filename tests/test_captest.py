@@ -1257,3 +1257,85 @@ class TestYamlKeyParametrization:
         doc = yaml.safe_load(p.read_text())
         assert "unrelated_key" not in doc
         assert "captest" in doc
+
+
+# --- End-to-end integration tests (Unit 9) -------------------------------
+
+# Time window covering the example measured data's 5-day range. ``filter_time``
+# is applied to the simulated CapData so its one-year PVsyst export is
+# narrowed to the same span before ``rep_cond`` is computed.
+_SIM_WINDOW = ("1990-10-09", "1990-10-13 23:55:00")
+
+
+class TestIntegration:
+    """End-to-end runs through each shipped ``TEST_SETUPS`` preset.
+
+    Each test exercises the canonical filter-sequence ->
+    reporting-conditions -> fit -> ``captest_results`` path using the
+    ``ct_*`` fixtures from ``conftest.py``. Asserts a plausible capacity
+    ratio and that any preset-specific calculated columns were materialized
+    by ``setup()``.
+    """
+
+    @staticmethod
+    def _run_canonical_sequence(capt):
+        """Apply filter_irr (both), filter_shade+filter_time (sim), rep_cond,
+        fit_regression. Mirrors the canonical capacity-test workflow a user
+        drives manually between ``setup()`` and ``captest_results()``.
+        """
+        capt.meas.filter_irr(capt.min_irr, capt.max_irr)
+        capt.sim.filter_irr(capt.min_irr, capt.max_irr)
+        # ``filter_shade`` keys off PVsyst's ``FShdBm`` column, so it is only
+        # applicable to the sim CapData.
+        capt.sim.filter_shade(fshdbm=capt.fshdbm)
+        capt.sim.filter_time(start=_SIM_WINDOW[0], end=_SIM_WINDOW[1])
+        capt.rep_cond()
+        capt.rep_cond(which="sim")
+        capt.meas.fit_regression(summary=False)
+        capt.sim.fit_regression(summary=False)
+
+    def test_end_to_end_e2848_default(self, ct_default):
+        """Default ASTM E2848 preset runs end-to-end to a plausible cap ratio."""
+        self._run_canonical_sequence(ct_default)
+        cap_ratio = ct_default.captest_results(print_res=False)
+        assert 0.8 < cap_ratio < 1.2
+        # Regression-column resolution on setup() wires the aggregated names.
+        assert ct_default.meas.regression_cols["poa"] == "irr_poa_mean_agg"
+        assert ct_default.sim.regression_cols["poa"] == "GlobInc"
+
+    def test_end_to_end_bifi_e2848_etotal(self, ct_etotal):
+        """Bifacial e_total preset runs end-to-end; e_total column materialized."""
+        # setup() (called by from_params) already ran process_regression_columns
+        # which adds the e_total column to both CapData instances.
+        assert "e_total" in ct_etotal.meas.data.columns
+        assert "e_total" in ct_etotal.sim.data.columns
+
+        self._run_canonical_sequence(ct_etotal)
+        cap_ratio = ct_etotal.captest_results(print_res=False)
+        assert 0.8 < cap_ratio < 1.2
+        # The regression uses e_total as the "poa" column for both sides.
+        assert ct_etotal.meas.regression_cols["poa"] == "e_total"
+        assert ct_etotal.sim.regression_cols["poa"] == "e_total"
+
+    def test_end_to_end_bifi_power_tc(self, ct_bifi_power_tc):
+        """Bifacial power-temp-corrected preset runs end-to-end.
+
+        Verifies that the ``power_temp_correct`` calculated column was added to
+        both CapData instances during ``setup()``, that the scatter layout has
+        two panels (one per rhs variable: ``poa`` and ``rpoa``), and that the
+        cap ratio is plausible.
+        """
+        assert "power_temp_correct" in ct_bifi_power_tc.meas.data.columns
+        assert "power_temp_correct" in ct_bifi_power_tc.sim.data.columns
+
+        # scatter_plots delegates to the preset's scatter_bifi_power_tc
+        # callable, which returns a 2-panel Layout (one for each rhs term).
+        layout = ct_bifi_power_tc.scatter_plots()
+        import holoviews as hv
+
+        assert isinstance(layout, hv.Layout)
+        assert len(layout) == 2
+
+        self._run_canonical_sequence(ct_bifi_power_tc)
+        cap_ratio = ct_bifi_power_tc.captest_results(print_res=False)
+        assert 0.8 < cap_ratio < 1.2
