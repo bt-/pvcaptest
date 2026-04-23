@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pvlib
 import pandas as pd
@@ -451,11 +453,88 @@ class TestAbsoluteAirmass:
             pressure_scale=1,
             verbose=False,
         )
-        rel = pvlib.atmosphere.get_relative_airmass(
-            df["zenith"], model="kastenyoung1989"
-        )
+        rel = pvlib.atmosphere.get_relative_airmass(df["zenith"], model="kastenyoung1989")
         expected = pvlib.atmosphere.get_absolute_airmass(rel, df["pressure_pa"])
         np.testing.assert_allclose(result.values, expected.values)
+
+    def test_in_range_pressure_does_not_warn(self):
+        """Typical station pressure (hPa * 100) passes the sanity check silently."""
+        df = self._day_df()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # any warning would raise
+            calcparams.absolute_airmass(
+                df,
+                apparent_zenith="zenith",
+                pressure="pressure",
+                verbose=False,
+            )
+
+    def test_outlier_pressure_row_does_not_warn(self):
+        """Isolated bad-data rows outside the 5th-95th percentile band are ignored."""
+        n = 100
+        ix = pd.date_range("2023-06-21 00:00", periods=n, freq="h")
+        pressure = np.full(n, 1013.0)
+        # A couple of sentinel outliers at the ends — well below the 5th
+        # percentile position (n * 0.05 = 5) so they don't bias the check.
+        pressure[0] = -9999.0
+        pressure[-1] = 99999.0
+        df = pd.DataFrame(
+            {"zenith": np.full(n, 45.0), "pressure": pressure}, index=ix
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            calcparams.absolute_airmass(
+                df,
+                apparent_zenith="zenith",
+                pressure="pressure",
+                verbose=False,
+            )
+
+    def test_out_of_range_pressure_warns_when_scale_mismatch(self):
+        """Column already in Pa with default scale=100 triggers the warning."""
+        df = self._day_df()
+        # Multiply by 100 so the column is in Pa; the default pressure_scale
+        # of 100 then over-scales to ~10^7 Pa -> 95th percentile well above
+        # the record maximum.
+        df["pressure_already_pa"] = df["pressure"] * 100
+        with pytest.warns(UserWarning, match="out of range"):
+            calcparams.absolute_airmass(
+                df,
+                apparent_zenith="zenith",
+                pressure="pressure_already_pa",
+                verbose=False,
+            )
+
+    def test_out_of_range_pressure_low_warns(self):
+        """Sustained low pressure (below record) triggers the warning."""
+        ix = pd.date_range("2023-06-21 10:00", periods=20, freq="h")
+        df = pd.DataFrame(
+            {"zenith": np.full(20, 45.0), "pressure": np.full(20, 500.0)},
+            index=ix,
+        )
+        with pytest.warns(UserWarning, match="out of range"):
+            calcparams.absolute_airmass(
+                df,
+                apparent_zenith="zenith",
+                pressure="pressure",
+                verbose=False,
+            )
+
+    def test_empty_pressure_series_does_not_warn(self):
+        """All-NaN pressure skips the check instead of raising."""
+        ix = pd.date_range("2023-06-21 10:00", periods=5, freq="h")
+        df = pd.DataFrame(
+            {"zenith": [20.0, 30.0, 45.0, 60.0, 75.0], "pressure": np.nan},
+            index=ix,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            calcparams.absolute_airmass(
+                df,
+                apparent_zenith="zenith",
+                pressure="pressure",
+                verbose=False,
+            )
 
 
 class TestPrecipitableWaterGueymard:

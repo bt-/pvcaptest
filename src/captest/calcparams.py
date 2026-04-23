@@ -6,10 +6,17 @@ Sandia module temperature model.
 """
 
 import copy
+import warnings
 
 import numpy as np
 import pvlib
 from pvlib.location import Location
+
+# Global record surface-pressure extremes (mBar) used by
+# :func:`absolute_airmass` to sanity-check pressure inputs. Low: ~870 mBar
+# (Typhoon Tip, 1979). High: ~1080 mBar (Mongolia, 2001).
+PRESSURE_MIN_MBAR = 870
+PRESSURE_MAX_MBAR = 1080
 
 EMP_HEAT_COEFF = {
     "open_rack": {
@@ -376,6 +383,41 @@ def apparent_zenith_pvsyst(
     return zenith
 
 
+def _check_pressure_range(pressure_pa, pressure_col):
+    """Warn if the central 90% of ``pressure_pa`` falls outside plausible bounds.
+
+    Uses the 5th and 95th percentiles to ignore isolated outlier readings from
+    sensor noise or missing-value placeholders. Compares against the global
+    record surface-pressure extremes (``PRESSURE_MIN_MBAR`` /
+    ``PRESSURE_MAX_MBAR``) converted to Pa. Any percentile outside that band
+    indicates a unit mismatch (e.g. a column already in Pa with
+    ``pressure_scale=100`` applied, or a column in kPa) or bad data.
+
+    Parameters
+    ----------
+    pressure_pa : Series
+        Pressure values in Pa after applying ``pressure_scale``.
+    pressure_col : str
+        Column name used for the warning message context.
+    """
+    clean = pressure_pa.dropna()
+    if clean.empty:
+        return
+    p5, p95 = clean.quantile([0.05, 0.95])
+    min_pa = PRESSURE_MIN_MBAR * 100
+    max_pa = PRESSURE_MAX_MBAR * 100
+    if p5 < min_pa or p95 > max_pa:
+        warnings.warn(
+            f"absolute_airmass: scaled pressure values from column "
+            f"{pressure_col!r} appear out of range. 5th/95th percentile: "
+            f"{p5:.0f}/{p95:.0f} Pa; expected the central 90% to fall within "
+            f"[{min_pa}, {max_pa}] Pa (global records "
+            f"{PRESSURE_MIN_MBAR}-{PRESSURE_MAX_MBAR} mBar). Check the "
+            f"column units and the 'pressure_scale' kwarg.",
+            stacklevel=3,
+        )
+
+
 def absolute_airmass(
     data,
     apparent_zenith=None,
@@ -392,6 +434,14 @@ def absolute_airmass(
     ``None`` the pvlib default (101325 Pa) is used; otherwise the column
     ``data[pressure]`` is scaled by ``pressure_scale`` (default 100 to
     convert hPa/mbar to Pa) and passed through.
+
+    When a ``pressure`` column is supplied, the scaled pressure values are
+    sanity-checked against global surface-pressure records
+    (:data:`PRESSURE_MIN_MBAR` – :data:`PRESSURE_MAX_MBAR`). The 5th and
+    95th percentiles are used to ignore isolated outliers from bad data. A
+    :class:`UserWarning` is emitted if the central 90% of values falls
+    outside that band, which typically indicates a unit mismatch between
+    ``data[pressure]`` and ``pressure_scale``.
 
     Parameters
     ----------
@@ -432,6 +482,7 @@ def absolute_airmass(
     if pressure is None:
         return pvlib.atmosphere.get_absolute_airmass(rel_airmass)
     pressure_pa = data[pressure] * pressure_scale
+    _check_pressure_range(pressure_pa, pressure)
     return pvlib.atmosphere.get_absolute_airmass(rel_airmass, pressure_pa)
 
 
