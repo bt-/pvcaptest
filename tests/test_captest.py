@@ -520,6 +520,210 @@ class TestFromYaml:
         assert called == [str(tmp_path / "meas.csv")]
 
 
+class TestFromMapping:
+    """Direct construction from an already-parsed sub-mapping dict.
+
+    Downstream wrappers (e.g. perfactory) mutate the captest sub-mapping
+    in memory -- applying project-specific defaults, promoting fields,
+    absolutizing paths -- before constructing the ``CapTest``.
+    ``from_mapping`` exposes this handoff directly, avoiding a tempfile
+    round-trip through ``from_yaml``. The post-parse pipeline shared with
+    ``from_yaml`` (unknown-key detection, overrides flattening,
+    test_setup required, reg_fml collision, custom-requires-overrides,
+    None-stripping, loader injection, raw-path preservation) lives in
+    ``from_mapping`` after this refactor; ``from_yaml`` is a thin file-read
+    wrapper that delegates.
+    """
+
+    def test_happy_path_returns_capt(self, tmp_path, meas_cd_default, sim_cd_default):
+        meas_file = tmp_path / "meas.csv"
+        meas_file.write_text("")
+        sim_file = tmp_path / "sim.csv"
+        sim_file.write_text("")
+        sub = {
+            "test_setup": "e2848_default",
+            "ac_nameplate": 100,
+            "meas_path": str(meas_file),
+            "sim_path": str(sim_file),
+        }
+        meas_loader = MagicMock(return_value=meas_cd_default)
+        sim_loader = MagicMock(return_value=sim_cd_default)
+        capt = CapTest.from_mapping(
+            sub, meas_loader=meas_loader, sim_loader=sim_loader
+        )
+        assert capt.ac_nameplate == 100
+        meas_loader.assert_called_once_with(str(meas_file))
+        sim_loader.assert_called_once_with(str(sim_file))
+
+    def test_requires_test_setup(self):
+        with pytest.raises(ValueError, match="test_setup"):
+            CapTest.from_mapping({"ac_nameplate": 100})
+
+    def test_rejects_unknown_keys(self):
+        with pytest.raises(ValueError, match="ac_namplate"):
+            CapTest.from_mapping(
+                {"test_setup": "e2848_default", "ac_namplate": 1}
+            )
+
+    def test_rejects_non_mapping_sub(self):
+        with pytest.raises(TypeError, match="sub"):
+            CapTest.from_mapping([("test_setup", "e2848_default")])
+
+    def test_relative_path_without_base_dir_raises(self):
+        sub = {
+            "test_setup": "e2848_default",
+            "meas_path": "./rel/meas.csv",
+        }
+        with pytest.raises(ValueError, match="base_dir"):
+            CapTest.from_mapping(sub)
+
+    def test_relative_path_resolves_against_local_base_dir(
+        self, tmp_path, meas_cd_default
+    ):
+        meas_file = tmp_path / "meas.csv"
+        meas_file.write_text("")
+        sub = {
+            "test_setup": "e2848_default",
+            "meas_path": "./meas.csv",
+        }
+        meas_loader = MagicMock(return_value=meas_cd_default)
+        CapTest.from_mapping(
+            sub, base_dir=tmp_path, meas_loader=meas_loader
+        )
+        meas_loader.assert_called_once_with(str(tmp_path / "meas.csv"))
+
+    def test_uri_scheme_path_skips_resolution(self, meas_cd_default):
+        """``s3://...`` passes through without being joined to base_dir.
+
+        ``Path("s3://bucket/key").is_absolute()`` returns False on posix,
+        so a naive Path-based check would mangle the URI. The explicit
+        ``"://"`` check in ``_is_uri_or_absolute_path`` handles it.
+        """
+        sub = {
+            "test_setup": "e2848_default",
+            "meas_path": "s3://bucket/clients/signal/data/parquet_clean",
+        }
+        meas_loader = MagicMock(return_value=meas_cd_default)
+        CapTest.from_mapping(
+            sub,
+            base_dir="/irrelevant/local/dir",  # should be ignored
+            meas_loader=meas_loader,
+        )
+        meas_loader.assert_called_once_with(
+            "s3://bucket/clients/signal/data/parquet_clean"
+        )
+
+    def test_uri_scheme_base_dir_string_concats(self, meas_cd_default):
+        """URI-scheme base_dir + relative filename preserves the scheme.
+
+        ``Path("s3://bucket/prefix") / "file"`` would collapse the
+        double slash to ``s3:/bucket/prefix/file``; the string-concat
+        branch in ``_join_base_and_relative`` avoids this.
+        """
+        sub = {
+            "test_setup": "e2848_default",
+            "meas_path": "data/parquet_clean",
+        }
+        meas_loader = MagicMock(return_value=meas_cd_default)
+        CapTest.from_mapping(
+            sub,
+            base_dir="s3://bucket/clients/signal",
+            meas_loader=meas_loader,
+        )
+        meas_loader.assert_called_once_with(
+            "s3://bucket/clients/signal/data/parquet_clean"
+        )
+
+    def test_forwards_meas_loader_kwarg(self, tmp_path, meas_cd_default):
+        meas_file = tmp_path / "meas.csv"
+        meas_file.write_text("")
+        sub = {"test_setup": "e2848_default", "meas_path": str(meas_file)}
+        meas_loader = MagicMock(return_value=meas_cd_default)
+        CapTest.from_mapping(sub, meas_loader=meas_loader)
+        meas_loader.assert_called_once_with(str(meas_file))
+
+    def test_forwards_sim_loader_kwarg(self, tmp_path, sim_cd_default):
+        sim_file = tmp_path / "sim.csv"
+        sim_file.write_text("")
+        sub = {"test_setup": "e2848_default", "sim_path": str(sim_file)}
+        sim_loader = MagicMock(return_value=sim_cd_default)
+        CapTest.from_mapping(sub, sim_loader=sim_loader)
+        sim_loader.assert_called_once_with(str(sim_file))
+
+    def test_does_not_mutate_sub(self, tmp_path, meas_cd_default):
+        meas_file = tmp_path / "meas.csv"
+        meas_file.write_text("")
+        sub = {
+            "test_setup": "e2848_default",
+            "meas_path": "./meas.csv",
+        }
+        snapshot = dict(sub)
+        meas_loader = MagicMock(return_value=meas_cd_default)
+        CapTest.from_mapping(
+            sub, base_dir=tmp_path, meas_loader=meas_loader
+        )
+        assert sub == snapshot, "from_mapping must not mutate the sub-mapping"
+
+    def test_preserves_raw_meas_path_for_round_trip(
+        self, tmp_path, meas_cd_default
+    ):
+        """The raw (possibly relative) meas_path is stored on _meas_path so
+        a later to_yaml emits what the user originally wrote."""
+        meas_file = tmp_path / "meas.csv"
+        meas_file.write_text("")
+        sub = {
+            "test_setup": "e2848_default",
+            "meas_path": "./meas.csv",
+        }
+        meas_loader = MagicMock(return_value=meas_cd_default)
+        capt = CapTest.from_mapping(
+            sub, base_dir=tmp_path, meas_loader=meas_loader
+        )
+        assert capt._meas_path == "./meas.csv"
+
+    def test_from_yaml_delegates_to_from_mapping(
+        self, tmp_path, monkeypatch, meas_cd_default
+    ):
+        """``from_yaml`` is now a thin wrapper around ``from_mapping``.
+
+        Verifies that after load_config parses the file, ``from_yaml``
+        forwards the sub-mapping, key, base_dir, and loader kwargs
+        unchanged to ``from_mapping``.
+        """
+        p = tmp_path / "cfg.yaml"
+        p.write_text(
+            "captest:\n  test_setup: e2848_default\n  ac_nameplate: 42\n"
+        )
+        recorded = {}
+
+        real_from_mapping = CapTest.from_mapping
+
+        def spy(sub, *, key, base_dir, meas_loader, sim_loader):
+            recorded["sub"] = sub
+            recorded["key"] = key
+            recorded["base_dir"] = base_dir
+            recorded["meas_loader"] = meas_loader
+            recorded["sim_loader"] = sim_loader
+            return real_from_mapping.__func__(
+                CapTest,
+                sub,
+                key=key,
+                base_dir=base_dir,
+                meas_loader=meas_loader,
+                sim_loader=sim_loader,
+            )
+
+        monkeypatch.setattr(CapTest, "from_mapping", spy)
+        CapTest.from_yaml(p)
+
+        assert recorded["key"] == "captest"
+        assert recorded["base_dir"] == p.parent
+        assert recorded["sub"]["test_setup"] == "e2848_default"
+        assert recorded["sub"]["ac_nameplate"] == 42
+        assert recorded["meas_loader"] is None
+        assert recorded["sim_loader"] is None
+
+
 class TestLoadConfigPublicExport:
     """``load_config`` is a public helper on the ``captest`` package root.
 

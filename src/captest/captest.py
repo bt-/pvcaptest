@@ -662,6 +662,41 @@ def _suggest_unknown_key(unknown, known):
     return f" Did you mean {matches[0]!r}?" if matches else ""
 
 
+def _is_uri_or_absolute_path(val):
+    """Return True if ``val`` should be treated as an absolute location.
+
+    A string is "absolute" in this context if it either:
+
+    * carries a URI scheme (e.g. ``s3://bucket/key``, ``gs://...``,
+      ``file:///...``) -- ``"://"`` substring check, or
+    * is an absolute filesystem path per :meth:`pathlib.Path.is_absolute`.
+
+    The scheme check is required because on posix systems
+    ``Path("s3://bucket/key").is_absolute()`` returns False (the colon
+    becomes part of the first path component), so relying on Path alone
+    would incorrectly treat S3 URIs as relative and mangle them during
+    path joining.
+    """
+    s = str(val)
+    if "://" in s:
+        return True
+    return Path(s).is_absolute()
+
+
+def _join_base_and_relative(base_dir, relative):
+    """Join a relative path to a base directory, preserving URI schemes.
+
+    Local ``base_dir`` values are joined via :class:`pathlib.Path`.
+    URI-scheme ``base_dir`` values (e.g. ``s3://bucket/prefix``) are
+    joined by string concatenation because ``Path("s3://...")`` mangles
+    the double slash after the scheme.
+    """
+    base_str = str(base_dir)
+    if "://" in base_str:
+        return base_str.rstrip("/") + "/" + str(relative).lstrip("/")
+    return str(Path(base_str) / relative)
+
+
 # --- CapTest class --------------------------------------------------------
 
 # Keys of ``captest.captest.CapTest`` params that may appear directly under the
@@ -1077,8 +1112,9 @@ class CapTest(param.Parameterized):
         """Construct a CapTest from a yaml config file.
 
         Reads the sub-mapping at the given top-level ``key`` of the yaml
-        file. Relative ``meas_path`` and ``sim_path`` values are resolved
-        against ``path.parent`` so yaml files can ship alongside data.
+        file and delegates to :meth:`from_mapping` with
+        ``base_dir=path.parent`` so relative ``meas_path`` / ``sim_path``
+        values resolve against the yaml's directory.
 
         Parameters
         ----------
@@ -1100,6 +1136,64 @@ class CapTest(param.Parameterized):
         """
         path = Path(path)
         sub = load_config(path, key=key)
+        return cls.from_mapping(
+            sub,
+            key=key,
+            base_dir=path.parent,
+            meas_loader=meas_loader,
+            sim_loader=sim_loader,
+        )
+
+    @classmethod
+    def from_mapping(
+        cls, sub, *, key="captest", base_dir=None, meas_loader=None, sim_loader=None
+    ):
+        """Construct a CapTest from an already-parsed captest sub-mapping.
+
+        Direct-handoff constructor used by downstream wrappers (e.g.
+        perfactory's ``load_captest``) that mutate the captest sub-mapping
+        in memory -- applying project-specific defaults, promoting fields,
+        injecting paths -- before asking captest to validate and build the
+        ``CapTest``. Exposes the same validate-and-construct pipeline that
+        ``from_yaml`` runs after reading the file, without the file read.
+
+        Parameters
+        ----------
+        sub : dict
+            Captest sub-mapping. Typically obtained from
+            :func:`load_config` or assembled by a downstream wrapper. Must
+            contain ``test_setup``. Supported keys are declared by
+            ``_CAPTEST_YAML_KEYS`` / ``_CAPTEST_OVERRIDE_KEYS``. ``sub``
+            is not mutated.
+        key : str, default 'captest'
+            Purely used in error messages (e.g. "Unknown key 'x' under the
+            'captest' sub-mapping"). Match the top-level yaml key under
+            which this sub-mapping would normally live so error messages
+            point users at the right place in their config file.
+        base_dir : str, Path, or None, default None
+            Base directory used to resolve relative ``meas_path`` /
+            ``sim_path`` values in ``sub``. If the sub-mapping contains
+            any relative path and ``base_dir`` is ``None``, raises
+            ``ValueError``. URI-scheme values in the sub-mapping (e.g.
+            ``s3://bucket/path``) are treated as absolute and skip
+            resolution even though ``pathlib.Path.is_absolute()`` returns
+            False for them. URI-scheme ``base_dir`` values are joined to
+            relative paths via string concatenation so the scheme is
+            preserved; local ``base_dir`` values are joined via
+            :class:`pathlib.Path`.
+        meas_loader, sim_loader : callable or None, optional
+            Programmatic-only loader callables that override the default
+            resolution (``captest.io.load_data`` / ``captest.io.load_pvsyst``).
+            Same semantics as :meth:`from_yaml`.
+
+        Returns
+        -------
+        CapTest
+        """
+        if not isinstance(sub, dict):
+            raise TypeError(
+                f"'sub' must be a mapping; got {type(sub).__name__}."
+            )
 
         # Unknown-key detection with Levenshtein suggestion.
         for k in sub:
@@ -1141,32 +1235,43 @@ class CapTest(param.Parameterized):
                         f"test_setup='custom' requires overrides.{req} to be set."
                     )
 
-        # Resolve relative paths against the yaml file's directory.
-        base_dir = path.parent
+        # Resolve relative paths. URI-scheme paths (e.g. s3://) are treated
+        # as absolute; Path.is_absolute() alone is not enough because on
+        # posix systems Path("s3://...").is_absolute() returns False.
         for path_key in ("meas_path", "sim_path"):
             val = kwargs.get(path_key)
-            if val is not None:
-                val_path = Path(val)
-                if not val_path.is_absolute():
-                    kwargs[path_key] = str(base_dir / val_path)
+            if val is None:
+                continue
+            val_str = str(val)
+            if _is_uri_or_absolute_path(val_str):
+                continue
+            if base_dir is None:
+                raise ValueError(
+                    f"Relative {path_key}={val_str!r} in the {key!r} sub-mapping "
+                    f"but no base_dir was supplied to from_mapping. Pass "
+                    f"base_dir= explicitly, or use absolute paths / URIs in "
+                    f"the mapping."
+                )
+            kwargs[path_key] = _join_base_and_relative(base_dir, val_str)
 
         # ``null`` (None) in yaml is equivalent to omitting the key.
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
 
         # Inject programmatic-only loader callables. Explicit kwargs win
-        # over any value that happened to slip through yaml (loaders are
-        # ``param.Callable`` so yaml would coerce-fail before reaching here,
-        # but be defensive).
+        # over any value that happened to slip through the sub-mapping
+        # (loaders are ``param.Callable`` so yaml would coerce-fail before
+        # reaching here, but be defensive).
         if meas_loader is not None:
             kwargs["meas_loader"] = meas_loader
         if sim_loader is not None:
             kwargs["sim_loader"] = sim_loader
 
         inst = cls.from_params(**kwargs)
-        # Preserve the raw relative-or-absolute paths the user wrote in the
-        # yaml so a later ``to_yaml`` round-trips them. ``from_params``
-        # overwrites ``_meas_path``/``_sim_path`` with the resolved absolute
-        # paths; restore the original literal values here.
+        # Preserve the raw relative-or-absolute paths the user wrote in
+        # the sub-mapping so a later ``to_yaml`` round-trips them.
+        # ``from_params`` overwrites ``_meas_path`` / ``_sim_path`` with
+        # the resolved absolute paths; restore the original literal values
+        # here.
         raw_meas_path = sub.get("meas_path")
         raw_sim_path = sub.get("sim_path")
         if raw_meas_path is not None:
