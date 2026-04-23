@@ -30,11 +30,18 @@ import yaml
 from captest import util
 from captest.capdata import CapData
 from captest.calcparams import (
+    absolute_airmass,
+    apparent_zenith,
+    apparent_zenith_pvsyst,
     bom_temp,
     cell_temp,
     e_total,
+    poa_spec_corrected,
     power_temp_correct,
+    precipitable_water_gueymard,
     rpoa_pvsyst,
+    scale,
+    spectral_factor_firstsolar,
 )
 
 _hv_spec = importlib.util.find_spec("holoviews")
@@ -309,6 +316,82 @@ TEST_SETUPS = {
             "func": {
                 "poa": perc_wrap(60),
                 "rpoa": "mean",
+            },
+        },
+    },
+    "e2848_spec_corrected_poa": {
+        "reg_cols_meas": {
+            "power": ("real_pwr_mtr", "sum"),
+            "poa": (
+                poa_spec_corrected,
+                {
+                    "poa": ("irr_poa", "mean"),
+                    "spectral_correction": (
+                        spectral_factor_firstsolar,
+                        {
+                            "precipitable_water": (
+                                precipitable_water_gueymard,
+                                {
+                                    "temp_amb": ("temp_amb", "mean"),
+                                    "rel_humidity": ("humidity", "mean"),
+                                },
+                            ),
+                            "absolute_airmass": (
+                                absolute_airmass,
+                                {
+                                    "apparent_zenith": (
+                                        apparent_zenith,
+                                        {},
+                                    ),
+                                    "pressure": ("pressure", "mean"),
+                                },
+                            ),
+                        },
+                    ),
+                },
+            ),
+            "t_amb": ("temp_amb", "mean"),
+            "w_vel": ("wind_speed", "mean"),
+        },
+        "reg_cols_sim": {
+            "power": "E_Grid",
+            "poa": (
+                poa_spec_corrected,
+                {
+                    "poa": "GlobInc",
+                    "spectral_correction": (
+                        spectral_factor_firstsolar,
+                        {
+                            "precipitable_water": (
+                                scale,
+                                {"col": "PrecWat", "factor": 100},
+                            ),
+                            "absolute_airmass": (
+                                absolute_airmass,
+                                {
+                                    "apparent_zenith": (
+                                        apparent_zenith_pvsyst,
+                                        {},
+                                    ),
+                                },
+                            ),
+                        },
+                    ),
+                },
+            ),
+            "t_amb": "T_Amb",
+            "w_vel": "WindVel",
+        },
+        "reg_fml": "power ~ poa + I(poa * poa) + I(poa * t_amb) + I(poa * w_vel) - 1",
+        "scatter_plots": scatter_default,
+        "rep_conditions": {
+            "irr_bal": False,
+            "percent_filter": 20,
+            "front_poa": "poa",
+            "func": {
+                "poa": perc_wrap(60),
+                "t_amb": "mean",
+                "w_vel": "mean",
             },
         },
     },
@@ -607,6 +690,7 @@ _CAPTEST_YAML_KEYS = frozenset(
         "bifaciality",
         "power_temp_coeff",
         "base_temp",
+        "spectral_module_type",
         "meas_load_kwargs",
         "sim_load_kwargs",
         "meas_path",
@@ -859,6 +943,17 @@ class CapTest(param.Parameterized):
         default=25,
         doc="Base temperature for temperature correction (deg C).",
     )
+    spectral_module_type = param.String(
+        default="cdte",
+        doc=(
+            "Module type passed to pvlib.spectrum.spectral_factor_firstsolar "
+            "via calcparams.spectral_factor_firstsolar. Propagated onto both "
+            "CapData instances at setup() so it is auto-injected by "
+            "CapData.custom_param. Named to avoid collision with the "
+            "'module_type' kwarg of calcparams.bom_temp and "
+            "calcparams.cell_temp."
+        ),
+    )
 
     # Data-loader injection (programmatic-only; never serialized to yaml).
     meas_loader = param.Callable(
@@ -884,7 +979,12 @@ class CapTest(param.Parameterized):
 
     # Class-level tuple of param names to copy onto both CapData instances
     # during setup(). Extending is a one-line edit.
-    _downstream_attrs = ("bifaciality", "power_temp_coeff", "base_temp")
+    _downstream_attrs = (
+        "bifaciality",
+        "power_temp_coeff",
+        "base_temp",
+        "spectral_module_type",
+    )
 
     def __init__(self, **kwargs):  # noqa: D107
         super().__init__(**kwargs)
@@ -1190,6 +1290,7 @@ class CapTest(param.Parameterized):
             "bifaciality",
             "power_temp_coeff",
             "base_temp",
+            "spectral_module_type",
         )
         for name in scalar_names:
             sub[name] = getattr(self, name)
@@ -1204,6 +1305,52 @@ class CapTest(param.Parameterized):
         return sub
 
     # --- workflow methods ------------------------------------------------
+
+    def _propagate_sim_site(self):
+        """Deep-copy ``meas.site`` onto ``sim.site`` with a fixed-offset tz.
+
+        PVsyst data is not DST-aware, so presets that call
+        :func:`captest.calcparams.apparent_zenith_pvsyst` need
+        ``sim.site['loc']['tz']`` to be an ``Etc/GMT±N`` fixed-offset string.
+        When ``sim.site`` is unset and ``meas.site`` is available, this
+        helper deep-copies the latter and converts the tz to the nearest
+        fixed offset (using the January 1 offset so DST never biases the
+        conversion). Emits a ``UserWarning`` describing what was done.
+
+        If ``sim.site`` is already set by the user, leaves it untouched.
+        """
+        meas_site = getattr(self.meas, "site", None)
+        sim_site = getattr(self.sim, "site", None)
+        if meas_site is None or sim_site is not None:
+            return
+
+        new_site = copy.deepcopy(meas_site)
+        tz = new_site.get("loc", {}).get("tz")
+        if isinstance(tz, str):
+            try:
+                import zoneinfo
+                from datetime import datetime
+
+                zi = zoneinfo.ZoneInfo(tz)
+                # Use Jan 1 to avoid DST; PVsyst timestamps are non-DST.
+                offset = datetime(2000, 1, 1, tzinfo=zi).utcoffset()
+                offset_hours = int(offset.total_seconds() // 3600)
+                # Etc/GMT uses inverted signs: UTC-6 is 'Etc/GMT+6'.
+                etc_tz = f"Etc/GMT{-offset_hours:+d}"
+                new_site["loc"]["tz"] = etc_tz
+                warnings.warn(
+                    f"Propagating meas.site onto sim.site and converting tz "
+                    f"from {tz!r} to {etc_tz!r} (PVsyst data is not DST-aware).",
+                    stacklevel=2,
+                )
+            except Exception:  # pragma: no cover - tz lookup failure is rare
+                warnings.warn(
+                    f"Propagating meas.site onto sim.site but could not "
+                    f"convert tz {tz!r} to an Etc/GMT±N fixed offset; "
+                    f"leaving tz unchanged.",
+                    stacklevel=2,
+                )
+        self.sim.site = new_site
 
     def setup(self, verbose=True):
         """Resolve TEST_SETUPS, propagate scalars, process regression cols.
@@ -1243,6 +1390,9 @@ class CapTest(param.Parameterized):
         for name in self._downstream_attrs:
             setattr(self.meas, name, getattr(self, name))
             setattr(self.sim, name, getattr(self, name))
+
+        # Propagate site from meas -> sim with Etc/GMT±N tz for PVsyst.
+        self._propagate_sim_site()
 
         # Wire per-CapData regression state. Deepcopy the regression_cols
         # dict because process_regression_columns mutates it in place.

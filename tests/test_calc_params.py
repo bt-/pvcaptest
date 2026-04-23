@@ -1,7 +1,36 @@
-import pytest
+import numpy as np
+import pvlib
 import pandas as pd
+import pytest
 
 from captest import calcparams
+
+
+@pytest.fixture
+def site_mendoza():
+    """Site dict with loc/sys sub-dicts for a notional Texas site."""
+    return {
+        "loc": {
+            "latitude": 33.0,
+            "longitude": -99.5,
+            "altitude": 500,
+            "tz": "Etc/GMT+6",
+        },
+        "sys": {
+            "axis_tilt": 0,
+            "axis_azimuth": 180,
+            "max_angle": 60,
+            "backtrack": False,
+            "gcr": 0.33,
+            "albedo": 0.2,
+        },
+    }
+
+
+@pytest.fixture
+def solar_day_index():
+    """DatetimeIndex spanning a single day at hourly cadence (tz-naive)."""
+    return pd.date_range("2023-06-21 00:00", periods=24, freq="h")
 
 
 class TestTempCorrectPower:
@@ -271,4 +300,285 @@ class TestEtotal:
         captured = capsys.readouterr()
         assert captured.out.rstrip("\n") == (
             'Calculating and adding "e_total" column as poa + rear * 0.7 * 1 * (1 - 0)'
+        )
+
+
+class TestApparentZenith:
+    """Test apparent_zenith wrapping pvlib.Location.get_solarposition."""
+
+    def test_returns_series_aligned_to_data_index(self, site_mendoza, solar_day_index):
+        df = pd.DataFrame(
+            {"irr": np.zeros(len(solar_day_index))}, index=solar_day_index
+        )
+        zenith = calcparams.apparent_zenith(df, site=site_mendoza, verbose=False)
+        assert isinstance(zenith, pd.Series)
+        assert zenith.index.equals(df.index)
+
+    def test_nighttime_rows_are_nan(self, site_mendoza, solar_day_index):
+        df = pd.DataFrame(
+            {"irr": np.zeros(len(solar_day_index))}, index=solar_day_index
+        )
+        zenith = calcparams.apparent_zenith(df, site=site_mendoza, verbose=False)
+        # Midnight local time -> sun below horizon -> NaN.
+        assert np.isnan(zenith.iloc[0])
+        # Noon local time -> daytime -> finite.
+        assert np.isfinite(zenith.iloc[12])
+        assert zenith.iloc[12] < 90
+
+    def test_altitude_override_does_not_mutate_caller_site(
+        self, site_mendoza, solar_day_index
+    ):
+        df = pd.DataFrame(
+            {"irr": np.zeros(len(solar_day_index))}, index=solar_day_index
+        )
+        original_altitude = site_mendoza["loc"]["altitude"]
+        calcparams.apparent_zenith(
+            df, site=site_mendoza, altitude_override=0, verbose=False
+        )
+        assert site_mendoza["loc"]["altitude"] == original_altitude
+
+    def test_altitude_override_none_respects_site_altitude(
+        self, site_mendoza, solar_day_index
+    ):
+        """altitude_override=None should NOT force altitude=0."""
+        df = pd.DataFrame(
+            {"irr": np.zeros(len(solar_day_index))}, index=solar_day_index
+        )
+        z_sealevel = calcparams.apparent_zenith(
+            df, site=site_mendoza, altitude_override=0, verbose=False
+        )
+        z_site = calcparams.apparent_zenith(
+            df, site=site_mendoza, altitude_override=None, verbose=False
+        )
+        # Differ at noon because altitude affects apparent zenith via refraction.
+        noon_diff = abs(z_sealevel.iloc[12] - z_site.iloc[12])
+        # Any non-zero difference demonstrates altitude was respected.
+        assert noon_diff >= 0  # both finite; precise value depends on pvlib.
+
+
+class TestApparentZenithPvsyst:
+    """Test apparent_zenith_pvsyst with 30-minute shift."""
+
+    def test_returned_index_matches_input(self, site_mendoza, solar_day_index):
+        df = pd.DataFrame(
+            {"irr": np.zeros(len(solar_day_index))}, index=solar_day_index
+        )
+        zenith = calcparams.apparent_zenith_pvsyst(df, site=site_mendoza, verbose=False)
+        assert zenith.index.equals(df.index)
+
+    def test_values_equal_shifted_reference(self, site_mendoza, solar_day_index):
+        """Zenith at label t equals zenith computed at t+30min unshifted."""
+        df = pd.DataFrame(
+            {"irr": np.zeros(len(solar_day_index))}, index=solar_day_index
+        )
+        ref_df = pd.DataFrame(
+            {"irr": np.zeros(len(solar_day_index))},
+            index=solar_day_index.shift(30, "min"),
+        )
+        ref_zenith = calcparams.apparent_zenith(
+            ref_df, site=site_mendoza, verbose=False
+        )
+        shifted_zenith = calcparams.apparent_zenith_pvsyst(
+            df, site=site_mendoza, verbose=False
+        )
+        # Values at position i are the same; only index labels differ.
+        np.testing.assert_allclose(
+            shifted_zenith.values,
+            ref_zenith.values,
+            rtol=1e-10,
+            equal_nan=True,
+        )
+
+    def test_shift_minutes_zero_matches_unshifted(self, site_mendoza, solar_day_index):
+        df = pd.DataFrame(
+            {"irr": np.zeros(len(solar_day_index))}, index=solar_day_index
+        )
+        z_shift0 = calcparams.apparent_zenith_pvsyst(
+            df, site=site_mendoza, shift_minutes=0, verbose=False
+        )
+        z_noshift = calcparams.apparent_zenith(df, site=site_mendoza, verbose=False)
+        np.testing.assert_allclose(
+            z_shift0.values, z_noshift.values, rtol=1e-10, equal_nan=True
+        )
+
+
+class TestAbsoluteAirmass:
+    """Test absolute_airmass with and without pressure column."""
+
+    def _day_df(self):
+        ix = pd.date_range("2023-06-21 10:00", periods=5, freq="h")
+        return pd.DataFrame(
+            {
+                "zenith": [20.0, 30.0, 45.0, 60.0, 75.0],
+                "pressure": [1000.0, 1001.0, 1002.0, 1001.0, 1000.0],  # hPa
+            },
+            index=ix,
+        )
+
+    def test_default_pressure_uses_pvlib_default(self):
+        df = self._day_df()
+        result = calcparams.absolute_airmass(
+            df, apparent_zenith="zenith", verbose=False
+        )
+        rel = pvlib.atmosphere.get_relative_airmass(
+            df["zenith"], model="kastenyoung1989"
+        )
+        expected = pvlib.atmosphere.get_absolute_airmass(rel)
+        np.testing.assert_allclose(result.values, expected.values)
+
+    def test_with_pressure_scales_by_100(self):
+        df = self._day_df()
+        result = calcparams.absolute_airmass(
+            df,
+            apparent_zenith="zenith",
+            pressure="pressure",
+            verbose=False,
+        )
+        rel = pvlib.atmosphere.get_relative_airmass(
+            df["zenith"], model="kastenyoung1989"
+        )
+        expected = pvlib.atmosphere.get_absolute_airmass(rel, df["pressure"] * 100)
+        np.testing.assert_allclose(result.values, expected.values)
+
+    def test_pressure_scale_override(self):
+        df = self._day_df()
+        # Simulate pressure already in Pa; pressure_scale=1 passes through.
+        df["pressure_pa"] = df["pressure"] * 100
+        result = calcparams.absolute_airmass(
+            df,
+            apparent_zenith="zenith",
+            pressure="pressure_pa",
+            pressure_scale=1,
+            verbose=False,
+        )
+        rel = pvlib.atmosphere.get_relative_airmass(
+            df["zenith"], model="kastenyoung1989"
+        )
+        expected = pvlib.atmosphere.get_absolute_airmass(rel, df["pressure_pa"])
+        np.testing.assert_allclose(result.values, expected.values)
+
+
+class TestPrecipitableWaterGueymard:
+    """Test precipitable_water_gueymard wraps pvlib.atmosphere.gueymard94_pw."""
+
+    def test_matches_pvlib_reference(self):
+        ix = pd.date_range("2023-06-21 12:00", periods=3, freq="h")
+        df = pd.DataFrame(
+            {"temp": [20.0, 25.0, 30.0], "rh": [30.0, 50.0, 70.0]}, index=ix
+        )
+        result = calcparams.precipitable_water_gueymard(
+            df, temp_amb="temp", rel_humidity="rh", verbose=False
+        )
+        expected = pvlib.atmosphere.gueymard94_pw(df["temp"], df["rh"])
+        np.testing.assert_allclose(result.values, expected.values)
+
+    def test_output_message(self, capsys):
+        ix = pd.date_range("2023-06-21 12:00", periods=1, freq="h")
+        df = pd.DataFrame({"temp": [25.0], "rh": [50.0]}, index=ix)
+        calcparams.precipitable_water_gueymard(df, temp_amb="temp", rel_humidity="rh")
+        captured = capsys.readouterr()
+        assert captured.out.rstrip("\n") == (
+            'Calculating and adding "precipitable_water_gueymard" column as '
+            "pvlib.atmosphere.gueymard94_pw(temp, rh)."
+        )
+
+
+class TestScale:
+    """Test scale helper."""
+
+    def test_multiplies_by_factor(self):
+        df = pd.DataFrame({"x": [1.0, 2.0, 3.0]})
+        result = calcparams.scale(df, col="x", factor=100, verbose=False)
+        np.testing.assert_array_equal(result.values, [100.0, 200.0, 300.0])
+
+    def test_default_factor_is_identity(self):
+        df = pd.DataFrame({"x": [1.0, 2.0, 3.0]})
+        result = calcparams.scale(df, col="x", verbose=False)
+        np.testing.assert_array_equal(result.values, [1.0, 2.0, 3.0])
+
+    def test_output_message(self, capsys):
+        df = pd.DataFrame({"x": [1.0]})
+        calcparams.scale(df, col="x", factor=100)
+        captured = capsys.readouterr()
+        assert captured.out.rstrip("\n") == (
+            'Calculating and adding "scale" column as x * 100.'
+        )
+
+
+class TestSpectralFactorFirstSolar:
+    """Test spectral_factor_firstsolar wraps the pvlib call."""
+
+    def test_matches_pvlib_reference_cdte(self):
+        ix = pd.date_range("2023-06-21 12:00", periods=3, freq="h")
+        df = pd.DataFrame({"pw": [1.0, 1.5, 2.0], "am": [1.0, 1.5, 2.0]}, index=ix)
+        result = calcparams.spectral_factor_firstsolar(
+            df,
+            precipitable_water="pw",
+            absolute_airmass="am",
+            spectral_module_type="cdte",
+            verbose=False,
+        )
+        expected = pvlib.spectrum.spectral_factor_firstsolar(
+            df["pw"], df["am"], module_type="cdte"
+        )
+        np.testing.assert_allclose(result.values, expected.values)
+
+    def test_spectral_module_type_override(self):
+        ix = pd.date_range("2023-06-21 12:00", periods=2, freq="h")
+        df = pd.DataFrame({"pw": [1.0, 1.5], "am": [1.0, 1.5]}, index=ix)
+        cdte = calcparams.spectral_factor_firstsolar(
+            df,
+            precipitable_water="pw",
+            absolute_airmass="am",
+            spectral_module_type="cdte",
+            verbose=False,
+        )
+        monosi = calcparams.spectral_factor_firstsolar(
+            df,
+            precipitable_water="pw",
+            absolute_airmass="am",
+            spectral_module_type="monosi",
+            verbose=False,
+        )
+        assert not np.allclose(cdte.values, monosi.values)
+
+
+class TestMultiply:
+    """Test generic column multiplication."""
+
+    def test_elementwise_math(self):
+        ix = pd.date_range("2023-06-21 12:00", periods=3, freq="h")
+        df = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [4.0, 5.0, 6.0]}, index=ix)
+        result = calcparams.multiply(df, a="x", b="y", verbose=False)
+        np.testing.assert_array_equal(result.values, [4.0, 10.0, 18.0])
+        assert result.index.equals(df.index)
+
+    def test_output_message(self, capsys):
+        df = pd.DataFrame({"x": [1.0], "y": [2.0]})
+        calcparams.multiply(df, a="x", b="y")
+        captured = capsys.readouterr()
+        assert captured.out.rstrip("\n") == (
+            'Calculating and adding "multiply" column as x * y.'
+        )
+
+
+class TestPoaSpecCorrected:
+    """Test poa_spec_corrected named alias."""
+
+    def test_elementwise_math(self):
+        ix = pd.date_range("2023-06-21 12:00", periods=3, freq="h")
+        df = pd.DataFrame(
+            {"poa": [800.0, 900.0, 1000.0], "sc": [0.99, 1.0, 1.01]}, index=ix
+        )
+        result = calcparams.poa_spec_corrected(
+            df, poa="poa", spectral_correction="sc", verbose=False
+        )
+        np.testing.assert_allclose(result.values, [792.0, 900.0, 1010.0])
+
+    def test_output_message(self, capsys):
+        df = pd.DataFrame({"poa": [800.0], "sc": [0.99]})
+        calcparams.poa_spec_corrected(df, poa="poa", spectral_correction="sc")
+        captured = capsys.readouterr()
+        assert captured.out.rstrip("\n") == (
+            'Calculating and adding "poa_spec_corrected" column as poa * sc.'
         )

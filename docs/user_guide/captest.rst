@@ -40,6 +40,18 @@ conditions kwargs. Three presets ship with pvcaptest:
   ``power_temp_correct`` column. Uses
   :py:func:`~captest.captest.scatter_bifi_power_tc`, which returns a
   two-panel layout (one panel per right-hand-side term).
+- ``e2848_spec_corrected_poa`` — the default ASTM formula, but the ``poa``
+  term is a First Solar spectral-correction-adjusted POA
+  (``poa_spec_corrected = poa * spectral_factor_firstsolar``). The meas-side
+  tree computes precipitable water from measured humidity and ambient
+  temperature; the sim-side tree reads PVsyst ``PrecWat`` and converts it from
+  meters to centimeters via :py:func:`~captest.calcparams.scale`, and computes
+  the apparent zenith using
+  :py:func:`~captest.calcparams.apparent_zenith_pvsyst`, which handles
+  PVsyst's half-hour timestamp shift internally. Requires ``humidity`` and
+  ``pressure`` column groups on the measured :py:class:`~captest.capdata.CapData`,
+  a ``PrecWat`` column on the modeled :py:class:`~captest.capdata.CapData`,
+  and ``cd.site`` on the measured instance (see :ref:`spec_corrected_poa`).
 
 .. note::
 
@@ -299,3 +311,72 @@ file unconditionally.
     round-trip through yaml. ``to_yaml`` emits a single
     :py:class:`UserWarning` listing the attributes that were skipped and
     writes the rest of the configuration as normal.
+
+.. _spec_corrected_poa:
+
+Spectrally corrected POA (``e2848_spec_corrected_poa``)
+-------------------------------------------------------
+The ``e2848_spec_corrected_poa`` preset multiplies the regression-driving POA
+irradiance by a First Solar spectral-correction factor computed from pvlib
+per the `McCarthy 2024 PVPMC poster
+<https://pvpmc.sandia.gov/download/7822/?tmstv=1776198191>`_ and the
+`pvlib.spectrum.spectral_factor_firstsolar
+<https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.spectrum.spectral_factor_firstsolar.html>`_
+reference.
+
+Inputs required on the measured :py:class:`~captest.capdata.CapData`:
+
+- A ``humidity`` column group (relative humidity in percent).
+- A ``pressure`` column group (station pressure in hPa / mbar).
+- A ``cd.site`` attribute with ``{'loc': {...}, 'sys': {...}}`` sub-dicts.
+  The :py:func:`~captest.io.load_data` function populates this when called
+  with the ``site`` kwarg.
+
+Inputs required on the modeled :py:class:`~captest.capdata.CapData`:
+
+- A ``PrecWat`` column in the PVsyst output (configure the PVsyst export to
+  include precipitable water).
+
+At :py:meth:`~captest.captest.CapTest.setup` time the
+:py:class:`~captest.captest.CapTest` class auto-propagates ``meas.site`` onto
+``sim.site`` and converts the tz to the nearest fixed-offset ``Etc/GMT±N``
+string (PVsyst timestamps are not DST-aware). A
+:py:class:`UserWarning` describes the conversion. To use a different tz or
+site dict for the sim side, assign ``ct.sim.site = {...}`` before calling
+``setup()``.
+
+The module type passed to
+:py:func:`~captest.calcparams.spectral_factor_firstsolar` is controlled by the
+:py:attr:`~captest.captest.CapTest.spectral_module_type` parameter (default
+``'cdte'``). It is named ``spectral_module_type`` — not ``module_type`` —
+to avoid collision with the ``module_type`` kwarg of
+:py:func:`~captest.calcparams.bom_temp` and
+:py:func:`~captest.calcparams.cell_temp`.
+
+.. code-block:: Python
+
+    from captest import CapTest, load_data, load_pvsyst
+
+    site = {
+        'loc': {'latitude': 33.01, 'longitude': -99.56,
+                'altitude': 500, 'tz': 'America/Chicago'},
+        'sys': {'surface_tilt': 0, 'surface_azimuth': 180, 'albedo': 0.2},
+    }
+    meas = load_data(path='./data/measured/', site=site)
+    sim  = load_pvsyst(path='./data/pvsyst_results.csv')
+
+    ct = CapTest.from_params(
+        test_setup='e2848_spec_corrected_poa',
+        meas=meas,
+        sim=sim,
+        ac_nameplate=6_000_000,
+        test_tolerance='- 4',
+        spectral_module_type='cdte',   # default; override for non-CdTe plants
+    )
+
+.. note::
+
+    The spectrally corrected POA column is named ``poa_spec_corrected`` and
+    is added to both ``ct.meas.data`` and ``ct.sim.data`` by
+    :py:meth:`~captest.capdata.CapData.process_regression_columns`. The
+    regression then uses this column in place of raw POA irradiance.

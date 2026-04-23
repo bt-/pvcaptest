@@ -5,7 +5,11 @@ For example, back-of-module temperature from poa, wind speed, and ambient temp w
 Sandia module temperature model.
 """
 
+import copy
+
 import numpy as np
+import pvlib
+from pvlib.location import Location
 
 EMP_HEAT_COEFF = {
     "open_rack": {
@@ -245,3 +249,354 @@ def e_total(
             f"(1 - {rear_shade})"
         )
     return data[poa] + data[rpoa] * bifaciality * bifacial_frac * (1 - rear_shade)
+
+
+def apparent_zenith(data, site=None, altitude_override=0, verbose=True):
+    """Compute apparent solar zenith angle at each timestamp in ``data``.
+
+    Wraps :py:meth:`pvlib.location.Location.get_solarposition` and returns the
+    ``apparent_zenith`` column aligned to ``data.index``. Designed for use
+    inside a ``CapData.regression_cols`` calc tuple: ``site`` is auto-injected
+    by ``CapData.custom_param`` from ``cd.site``.
+
+    Per the pvlib First Solar spectral-correction reference, the absolute
+    airmass is computed against zenith at sea level. ``altitude_override``
+    defaults to 0 so a deep copy of ``site`` has its ``loc.altitude`` forced
+    to 0 before the ``Location`` is instantiated. The caller's ``site`` dict
+    is not mutated.
+
+    Night-time rows (``apparent_zenith > 90``) are set to NaN so downstream
+    airmass / spectral-factor calls do not emit pvlib warnings on invalid
+    geometry.
+
+    Parameters
+    ----------
+    data : DataFrame
+        DataFrame with a DatetimeIndex. The index may be tz-naive or tz-aware.
+    site : dict
+        Nested ``{"loc": {...}, "sys": {...}}`` dict as produced by
+        ``load_data(site=...)``. Only the ``loc`` sub-dict is consumed here.
+        Auto-injected from ``cd.site`` by ``custom_param`` when used in a
+        ``regression_cols`` calc tuple.
+    altitude_override : numeric, default 0
+        Altitude (in meters) to use when building the ``pvlib.Location``.
+        Set to ``None`` to respect ``site['loc']['altitude']`` unchanged.
+    verbose : bool, default True
+        Set to False to suppress the explanatory print message.
+
+    Returns
+    -------
+    Series
+        Apparent zenith angle (degrees) indexed like ``data.index`` with a
+        tz-naive index. NaN where the sun is below the horizon.
+    """
+    if verbose:
+        print(
+            f'Calculating and adding "{apparent_zenith.__name__}" column as '
+            f"pvlib.Location(**site['loc']).get_solarposition(data.index) "
+            f"with altitude_override={altitude_override}."
+        )
+    loc = copy.deepcopy(site["loc"])
+    if altitude_override is not None:
+        loc["altitude"] = altitude_override
+    location = Location(**loc)
+
+    times = data.index
+    if times.tz is None:
+        times = times.tz_localize(loc["tz"], ambiguous="infer", nonexistent="NaT")
+    solar_positions = location.get_solarposition(times)
+    zenith = solar_positions["apparent_zenith"]
+    zenith.index = zenith.index.tz_localize(None)
+    zenith = zenith.reindex(
+        data.index.tz_localize(None) if data.index.tz is not None else data.index
+    )
+    zenith = zenith.where(zenith <= 90)
+    return zenith
+
+
+def apparent_zenith_pvsyst(
+    data, site=None, altitude_override=0, shift_minutes=30, verbose=True
+):
+    """Apparent solar zenith at the mid-point of each PVsyst interval.
+
+    PVsyst reports hourly values labelled at the start of each interval but
+    computes sun positions at the interval mid-point. To match that
+    convention we shift ``data.index`` forward by ``shift_minutes`` before
+    calling :py:meth:`pvlib.location.Location.get_solarposition`, then shift
+    the resulting Series index back by the same amount so the output aligns
+    with the original ``data.index``.
+
+    The site timezone should be a fixed-offset ``Etc/GMT±N`` string because
+    PVsyst data is not DST-aware. ``CapTest.setup()`` auto-converts
+    ``meas.site`` to an ``Etc/GMT±N`` variant when propagating it to
+    ``sim.site``.
+
+    Parameters
+    ----------
+    data : DataFrame
+        DataFrame with a tz-naive DatetimeIndex at the PVsyst cadence.
+    site : dict
+        Same shape as :func:`apparent_zenith`. Auto-injected from ``cd.site``.
+    altitude_override : numeric, default 0
+        See :func:`apparent_zenith`.
+    shift_minutes : int, default 30
+        Interval mid-point offset applied to ``data.index`` before the pvlib
+        solar-position call. Set to 0 to disable the shift.
+    verbose : bool, default True
+        Set to False to suppress the explanatory print message.
+
+    Returns
+    -------
+    Series
+        Apparent zenith angle (degrees) indexed like ``data.index``.
+    """
+    if verbose:
+        print(
+            f'Calculating and adding "{apparent_zenith_pvsyst.__name__}" column as '
+            f"pvlib.Location(**site['loc']).get_solarposition(data.index + {shift_minutes} min) "
+            f"with the result shifted back by {shift_minutes} min and altitude_override={altitude_override}."
+        )
+    loc = copy.deepcopy(site["loc"])
+    if altitude_override is not None:
+        loc["altitude"] = altitude_override
+    location = Location(**loc)
+
+    shifted_index = data.index.shift(shift_minutes, "min")
+    if shifted_index.tz is None:
+        shifted_index = shifted_index.tz_localize(loc["tz"])
+    solar_positions = location.get_solarposition(shifted_index)
+    zenith = solar_positions["apparent_zenith"]
+    zenith.index = zenith.index.tz_localize(None).shift(-shift_minutes, "min")
+    # Align to the caller's index in case of any residual tz/frequency quirks.
+    target_index = (
+        data.index.tz_localize(None) if data.index.tz is not None else data.index
+    )
+    zenith = zenith.reindex(target_index)
+    zenith = zenith.where(zenith <= 90)
+    return zenith
+
+
+def absolute_airmass(
+    data,
+    apparent_zenith=None,
+    pressure=None,
+    pressure_scale=100,
+    airmass_model="kastenyoung1989",
+    verbose=True,
+):
+    """Compute absolute (pressure-corrected) airmass from apparent zenith.
+
+    Uses :py:func:`pvlib.atmosphere.get_relative_airmass` with the
+    ``kastenyoung1989`` model by default, then passes the result to
+    :py:func:`pvlib.atmosphere.get_absolute_airmass`. If ``pressure`` is
+    ``None`` the pvlib default (101325 Pa) is used; otherwise the column
+    ``data[pressure]`` is scaled by ``pressure_scale`` (default 100 to
+    convert hPa/mbar to Pa) and passed through.
+
+    Parameters
+    ----------
+    data : DataFrame
+        DataFrame containing the ``apparent_zenith`` (and optionally
+        ``pressure``) columns.
+    apparent_zenith : str
+        Column name for apparent zenith angle (degrees).
+    pressure : str or None, default None
+        Column name for station pressure. ``None`` falls back to pvlib's
+        default sea-level pressure.
+    pressure_scale : numeric, default 100
+        Multiplier applied to ``data[pressure]`` before passing to pvlib.
+        Default converts hPa/mbar to Pa.
+    airmass_model : str, default 'kastenyoung1989'
+        Model passed to :py:func:`pvlib.atmosphere.get_relative_airmass`.
+    verbose : bool, default True
+        Set to False to suppress the explanatory print message.
+
+    Returns
+    -------
+    Series
+        Absolute airmass indexed like ``data.index``.
+    """
+    if verbose:
+        pressure_desc = (
+            f"{pressure} * {pressure_scale} Pa"
+            if pressure is not None
+            else "pvlib default (101325 Pa)"
+        )
+        print(
+            f'Calculating and adding "{absolute_airmass.__name__}" column using '
+            f'airmass_model="{airmass_model}" on "{apparent_zenith}" and pressure={pressure_desc}.'
+        )
+    rel_airmass = pvlib.atmosphere.get_relative_airmass(
+        data[apparent_zenith], model=airmass_model
+    )
+    if pressure is None:
+        return pvlib.atmosphere.get_absolute_airmass(rel_airmass)
+    pressure_pa = data[pressure] * pressure_scale
+    return pvlib.atmosphere.get_absolute_airmass(rel_airmass, pressure_pa)
+
+
+def precipitable_water_gueymard(data, temp_amb=None, rel_humidity=None, verbose=True):
+    """Precipitable water (cm) from ambient temperature and relative humidity.
+
+    Wraps :py:func:`pvlib.atmosphere.gueymard94_pw`.
+
+    Parameters
+    ----------
+    data : DataFrame
+        DataFrame containing the ambient-temperature and relative-humidity
+        columns.
+    temp_amb : str
+        Column name for ambient (dry-bulb) temperature in degrees Celsius.
+    rel_humidity : str
+        Column name for relative humidity as a percentage (0-100).
+    verbose : bool, default True
+        Set to False to suppress the explanatory print message.
+
+    Returns
+    -------
+    Series
+        Precipitable water (cm) indexed like ``data.index``.
+    """
+    if verbose:
+        print(
+            f'Calculating and adding "{precipitable_water_gueymard.__name__}" column as '
+            f"pvlib.atmosphere.gueymard94_pw({temp_amb}, {rel_humidity})."
+        )
+    return pvlib.atmosphere.gueymard94_pw(data[temp_amb], data[rel_humidity])
+
+
+def scale(data, col=None, factor=1.0, verbose=True):
+    """Multiply a single column by a scalar factor.
+
+    Generic unit-conversion / rescaling helper usable in
+    ``regression_cols`` calc trees. Primary use in this module is converting
+    PVsyst ``PrecWat`` from meters to centimeters with ``factor=100``.
+
+    Parameters
+    ----------
+    data : DataFrame
+        Source DataFrame.
+    col : str
+        Column name to scale.
+    factor : numeric, default 1.0
+        Scalar multiplier applied elementwise to ``data[col]``.
+    verbose : bool, default True
+        Set to False to suppress the explanatory print message.
+
+    Returns
+    -------
+    Series
+        ``data[col] * factor`` indexed like ``data.index``.
+    """
+    if verbose:
+        print(f'Calculating and adding "{scale.__name__}" column as {col} * {factor}.')
+    return data[col] * factor
+
+
+def spectral_factor_firstsolar(
+    data,
+    precipitable_water=None,
+    absolute_airmass=None,
+    spectral_module_type="cdte",
+    verbose=True,
+):
+    """First Solar spectral correction factor.
+
+    Wraps :py:func:`pvlib.spectrum.spectral_factor_firstsolar`.
+    ``spectral_module_type`` defaults to ``'cdte'`` but can be overridden via
+    a ``cd.spectral_module_type`` attribute which ``custom_param``
+    auto-injects when the kwarg is left unset. ``CapTest`` propagates its
+    ``spectral_module_type`` param onto both CapData instances at
+    ``setup()``.
+
+    The kwarg is named ``spectral_module_type`` (not ``module_type``) to
+    avoid collisions with the ``module_type`` kwarg used by :func:`bom_temp`
+    and :func:`cell_temp`, which expects values like ``'glass_cell_poly'``
+    rather than the pvlib First Solar module-type strings.
+
+    Parameters
+    ----------
+    data : DataFrame
+        DataFrame containing the precipitable-water and absolute-airmass
+        columns.
+    precipitable_water : str
+        Column name for precipitable water in cm.
+    absolute_airmass : str
+        Column name for absolute airmass.
+    spectral_module_type : str, default 'cdte'
+        Passed through to :py:func:`pvlib.spectrum.spectral_factor_firstsolar`
+        as its ``module_type`` argument.
+    verbose : bool, default True
+        Set to False to suppress the explanatory print message.
+
+    Returns
+    -------
+    Series
+        Spectral correction factor indexed like ``data.index``.
+    """
+    if verbose:
+        print(
+            f'Calculating and adding "{spectral_factor_firstsolar.__name__}" column as '
+            f"pvlib.spectrum.spectral_factor_firstsolar({precipitable_water}, {absolute_airmass}, "
+            f'module_type="{spectral_module_type}").'
+        )
+    return pvlib.spectrum.spectral_factor_firstsolar(
+        data[precipitable_water],
+        data[absolute_airmass],
+        module_type=spectral_module_type,
+    )
+
+
+def multiply(data, a=None, b=None, verbose=True):
+    """Elementwise multiplication of two columns.
+
+    Parameters
+    ----------
+    data : DataFrame
+        Source DataFrame.
+    a, b : str
+        Column names to multiply. Both kwarg names must not collide with any
+        ``column_groups`` id, per ``CapData.custom_param`` semantics.
+    verbose : bool, default True
+        Set to False to suppress the explanatory print message.
+
+    Returns
+    -------
+    Series
+        ``data[a] * data[b]`` indexed like ``data.index``.
+    """
+    if verbose:
+        print(f'Calculating and adding "{multiply.__name__}" column as {a} * {b}.')
+    return data[a] * data[b]
+
+
+def poa_spec_corrected(data, poa=None, spectral_correction=None, verbose=True):
+    """Spectrally corrected plane-of-array irradiance.
+
+    Thin named alias that multiplies a POA column by a spectral-correction
+    column. Primary use is the top-level node of a ``regression_cols`` calc
+    tree whose ``spectral_correction`` kwarg is itself a calc subtree ending
+    in :func:`spectral_factor_firstsolar`.
+
+    Parameters
+    ----------
+    data : DataFrame
+        Source DataFrame.
+    poa : str
+        Column name for plane-of-array irradiance (W/m^2).
+    spectral_correction : str
+        Column name for the spectral correction factor.
+    verbose : bool, default True
+        Set to False to suppress the explanatory print message.
+
+    Returns
+    -------
+    Series
+        ``data[poa] * data[spectral_correction]`` indexed like ``data.index``.
+    """
+    if verbose:
+        print(
+            f'Calculating and adding "{poa_spec_corrected.__name__}" column as '
+            f"{poa} * {spectral_correction}."
+        )
+    return data[poa] * data[spectral_correction]

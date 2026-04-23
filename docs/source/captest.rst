@@ -52,6 +52,14 @@ captest.util module
    :undoc-members:
    :show-inheritance:
 
+captest.calcparams module
+-------------------------
+
+.. automodule:: captest.calcparams
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 captest.plotting module
 -------------------
 

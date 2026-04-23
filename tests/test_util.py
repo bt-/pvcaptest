@@ -223,6 +223,35 @@ class TestUpdateByPath:
 class TestProcessRegCols:
     """Test the process_reg_cols function."""
 
+    def test_scalar_literal_kwargs_pass_through(self, nested_calc_dict):
+        """Numeric literals inside calc-tuple kwargs are forwarded unchanged.
+
+        This locks in the behavior that calcparams functions like
+        ``scale(data, col, factor)`` receive their ``factor`` scalar from
+        the TEST_SETUPS nested tuple rather than only from the function
+        signature default.
+        """
+        dummy_cd, _ = nested_calc_dict
+        reg_cols = {
+            "scaled": (
+                type(dummy_cd).test_func1,
+                {
+                    "power": "real_pwr_mtr",
+                    "factor": 100,
+                    "enabled": True,
+                    "offset": 1.5,
+                },
+            ),
+        }
+        dummy_cd.regression_cols = copy.deepcopy(reg_cols)
+        util.process_reg_cols(reg_cols, cd=dummy_cd)
+        # Scalars survived the walk and were passed to custom_param.
+        assert dummy_cd.test_func1_kwargs["factor"] == 100
+        assert dummy_cd.test_func1_kwargs["enabled"] is True
+        assert dummy_cd.test_func1_kwargs["offset"] == 1.5
+        # The calc tuple was replaced by the function name at the top level.
+        assert reg_cols["scaled"] == "test_func1"
+
     def test_modifies_original_calc_params(self, nested_calc_dict):
         dummy_cd, test_dict = nested_calc_dict
         dummy_cd.regression_cols = copy.deepcopy(test_dict)

@@ -16,7 +16,21 @@ import pytest
 import yaml
 
 from captest import CapTest, captest as ct
-from captest.calcparams import e_total, power_temp_correct
+from captest.calcparams import (
+    apparent_zenith_pvsyst,
+    e_total,
+    poa_spec_corrected,
+    power_temp_correct,
+    spectral_factor_firstsolar,
+)
+
+# Presets that the shipped meas_cd_default / sim_cd_default fixtures cover
+# end-to-end through CapTest.setup(). Extend this list when you add a preset
+# whose required column_groups and site attributes are satisfied by the
+# default fixtures; otherwise add a dedicated fixture and a targeted test.
+_DEFAULT_FIXTURE_PRESETS = [
+    p for p in ct.TEST_SETUPS.keys() if p != "e2848_spec_corrected_poa"
+]
 
 
 class TestTestSetupsRegistry:
@@ -57,6 +71,25 @@ class TestTestSetupsRegistry:
         meas_power = entry["reg_cols_meas"]["power"]
         assert isinstance(meas_power, tuple)
         assert meas_power[0] is power_temp_correct
+
+    def test_e2848_spec_corrected_poa_meas_tree_uses_spectral_factor(self):
+        """The meas-side poa tree ends with spectral_factor_firstsolar."""
+        entry = ct.TEST_SETUPS["e2848_spec_corrected_poa"]
+        meas_poa = entry["reg_cols_meas"]["poa"]
+        assert isinstance(meas_poa, tuple)
+        assert meas_poa[0] is poa_spec_corrected
+        spec_node = meas_poa[1]["spectral_correction"]
+        assert isinstance(spec_node, tuple)
+        assert spec_node[0] is spectral_factor_firstsolar
+
+    def test_e2848_spec_corrected_poa_sim_uses_apparent_zenith_pvsyst(self):
+        """The sim-side tree routes through apparent_zenith_pvsyst."""
+        entry = ct.TEST_SETUPS["e2848_spec_corrected_poa"]
+        sim_poa = entry["reg_cols_sim"]["poa"]
+        abs_airmass_node = sim_poa[1]["spectral_correction"][1]["absolute_airmass"]
+        zenith_node = abs_airmass_node[1]["apparent_zenith"]
+        assert isinstance(zenith_node, tuple)
+        assert zenith_node[0] is apparent_zenith_pvsyst
 
     def test_validate_rejects_unknown_keys(self):
         bad = dict(ct.TEST_SETUPS["e2848_default"])
@@ -321,6 +354,7 @@ class TestConstruction:
             "bifaciality",
             "power_temp_coeff",
             "base_temp",
+            "spectral_module_type",
         )
 
     def test_from_params_with_capdata_instances_triggers_setup(
@@ -477,7 +511,7 @@ class TestSetup:
             assert getattr(capt.meas, attr) == getattr(capt, attr)
             assert getattr(capt.sim, attr) == getattr(capt, attr)
 
-    @pytest.mark.parametrize("preset", list(ct.TEST_SETUPS.keys()))
+    @pytest.mark.parametrize("preset", _DEFAULT_FIXTURE_PRESETS)
     def test_setup_wires_regression_formula(
         self, preset, meas_cd_default, sim_cd_default
     ):
@@ -611,6 +645,90 @@ class TestDownstreamPropagation:
         assert first["power_temp_correct"] == pytest.approx(expected)
 
 
+class TestCapTestSpectralCorrection:
+    """End-to-end behavior of the e2848_spec_corrected_poa preset."""
+
+    def test_meas_poa_spec_corrected_column_exists(
+        self, meas_cd_spec_corrected, sim_cd_spec_corrected
+    ):
+        with pytest.warns(UserWarning, match="Propagating meas.site"):
+            capt = CapTest.from_params(
+                test_setup="e2848_spec_corrected_poa",
+                meas=meas_cd_spec_corrected,
+                sim=sim_cd_spec_corrected,
+                ac_nameplate=6_000_000,
+                test_tolerance="- 4",
+            )
+        assert "poa_spec_corrected" in capt.meas.data.columns
+        # Daytime values should be finite and non-zero.
+        daytime = capt.meas.data["poa_spec_corrected"].dropna()
+        assert len(daytime) > 0
+        assert (daytime[daytime > 0] > 0).all()
+
+    def test_sim_poa_spec_corrected_column_exists(
+        self, meas_cd_spec_corrected, sim_cd_spec_corrected
+    ):
+        with pytest.warns(UserWarning, match="Propagating meas.site"):
+            capt = CapTest.from_params(
+                test_setup="e2848_spec_corrected_poa",
+                meas=meas_cd_spec_corrected,
+                sim=sim_cd_spec_corrected,
+                ac_nameplate=6_000_000,
+            )
+        assert "poa_spec_corrected" in capt.sim.data.columns
+
+    def test_sim_site_auto_propagated_with_fixed_offset_tz(
+        self, meas_cd_spec_corrected, sim_cd_spec_corrected
+    ):
+        assert getattr(sim_cd_spec_corrected, "site", None) is None
+        with pytest.warns(UserWarning, match="Propagating meas.site"):
+            capt = CapTest.from_params(
+                test_setup="e2848_spec_corrected_poa",
+                meas=meas_cd_spec_corrected,
+                sim=sim_cd_spec_corrected,
+            )
+        assert capt.sim.site is not None
+        tz = capt.sim.site["loc"]["tz"]
+        assert tz.startswith("Etc/GMT")
+        # America/Chicago standard offset is UTC-6 -> Etc/GMT+6.
+        assert tz == "Etc/GMT+6"
+        # Caller's meas.site tz is not mutated.
+        assert meas_cd_spec_corrected.site["loc"]["tz"] == "America/Chicago"
+
+    def test_user_set_sim_site_is_not_overwritten(
+        self, meas_cd_spec_corrected, sim_cd_spec_corrected
+    ):
+        user_site = {
+            "loc": {
+                "latitude": 33.0,
+                "longitude": -99.5,
+                "altitude": 0,
+                "tz": "Etc/GMT+5",
+            },
+            "sys": {"surface_tilt": 0, "surface_azimuth": 180, "albedo": 0.2},
+        }
+        sim_cd_spec_corrected.site = user_site
+        capt = CapTest.from_params(
+            test_setup="e2848_spec_corrected_poa",
+            meas=meas_cd_spec_corrected,
+            sim=sim_cd_spec_corrected,
+        )
+        assert capt.sim.site is user_site
+
+    def test_spectral_module_type_propagates_to_both_cd(
+        self, meas_cd_spec_corrected, sim_cd_spec_corrected
+    ):
+        with pytest.warns(UserWarning, match="Propagating meas.site"):
+            capt = CapTest.from_params(
+                test_setup="e2848_spec_corrected_poa",
+                meas=meas_cd_spec_corrected,
+                sim=sim_cd_spec_corrected,
+                spectral_module_type="monosi",
+            )
+        assert capt.meas.spectral_module_type == "monosi"
+        assert capt.sim.spectral_module_type == "monosi"
+
+
 class TestLoaderInjection:
     """Loader callable defaults, overrides, and kwarg splatting."""
 
@@ -731,7 +849,7 @@ class TestRepCondConvenience:
         assert resolved_rc["irr_bal"] is False
         assert "func" in resolved_rc
 
-    @pytest.mark.parametrize("preset", list(ct.TEST_SETUPS.keys()))
+    @pytest.mark.parametrize("preset", _DEFAULT_FIXTURE_PRESETS)
     def test_each_preset_rep_conditions_round_trips_through_rep_cond(
         self, preset, meas_cd_default, sim_cd_default
     ):

@@ -12,9 +12,28 @@ test-level setting (regression formula, reporting-conditions recipe, filter
 bounds, nameplate, tolerance, calc-params scalars), and drives the full
 capacity-test workflow from a single object.
 - New `TEST_SETUPS` registry of named regression presets shipped with
-pvcaptest. Three presets ship: `e2848_default` (default ASTM E2848),
-`bifi_e2848_etotal` (bifacial ASTM with `e_total` driver), and
-`bifi_power_tc` (temperature-corrected bifacial `power ~ poa + rpoa`).
+pvcaptest. Four presets ship: `e2848_default` (default ASTM E2848),
+`bifi_e2848_etotal` (bifacial ASTM with `e_total` driver),
+`bifi_power_tc` (temperature-corrected bifacial `power ~ poa + rpoa`), and
+`e2848_spec_corrected_poa` (ASTM with a First Solar spectral-correction factor
+applied to POA irradiance).
+- New `captest.calcparams` primitives for the First Solar spectral-correction
+flow described in the notebook that motivated the port:
+`apparent_zenith`, `apparent_zenith_pvsyst` (handles the PVsyst half-hour
+timestamp shift internally), `absolute_airmass`,
+`precipitable_water_gueymard`, `scale`, `spectral_factor_firstsolar`,
+`multiply`, and the named alias `poa_spec_corrected`.
+- New `CapTest.spectral_module_type` parameter (default `'cdte'`) that
+propagates onto both `CapData` instances at `setup()` so the module type is
+auto-injected into `spectral_factor_firstsolar`. The kwarg is named
+`spectral_module_type` to avoid collision with the `module_type` kwarg used
+by `bom_temp` and `cell_temp`, which expects values like
+`'glass_cell_poly'`.
+- `CapTest.setup()` now auto-propagates `meas.site` onto `sim.site` when the
+sim CapData has no site set, converting the tz to the nearest fixed-offset
+`Etc/GMT±N` string (PVsyst data is not DST-aware). Emits a `UserWarning`
+describing the conversion. Users who want a specific sim site can set
+`sim.site = {...}` before calling `setup()`.
 - New `captest.captest` module. Exports `CapTest`, `TEST_SETUPS`, the three
 scatter callables `scatter_default`, `scatter_etotal`, `scatter_bifi_power_tc`,
 and the helpers `perc_wrap`, `print_results`, `highlight_pvals`,

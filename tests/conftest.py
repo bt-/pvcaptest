@@ -280,6 +280,59 @@ def ct_bifi_power_tc(meas_cd_default, sim_cd_default):
 
 
 @pytest.fixture
+def meas_cd_spec_corrected(meas_cd_default):
+    """Measured CapData extended with humidity, pressure, and a site dict.
+
+    Needed to exercise the ``e2848_spec_corrected_poa`` preset, whose meas
+    tree requires ``humidity`` and ``pressure`` column groups plus
+    ``cd.site`` for apparent-zenith calculations.
+    """
+    cd = meas_cd_default
+    rng = np.random.default_rng(seed=42)
+    n = cd.data.shape[0]
+    cd.data["met1_humidity"] = np.clip(rng.normal(60.0, 10.0, n), 5.0, 95.0)
+    cd.data["met2_humidity"] = np.clip(rng.normal(60.0, 10.0, n), 5.0, 95.0)
+    cd.data["met1_pressure"] = rng.normal(1013.0, 3.0, n)
+    cd.data["met2_pressure"] = rng.normal(1013.0, 3.0, n)
+    cd.data_filtered = cd.data.copy(deep=True)
+    groups = dict(cd.column_groups)
+    groups["humidity"] = ["met1_humidity", "met2_humidity"]
+    groups["pressure"] = ["met1_pressure", "met2_pressure"]
+    cd.column_groups = cg.ColumnGroups(groups)
+    cd.site = {
+        "loc": {
+            "latitude": 33.0,
+            "longitude": -99.5,
+            "altitude": 500,
+            "tz": "America/Chicago",
+        },
+        "sys": {
+            "surface_tilt": 20,
+            "surface_azimuth": 180,
+            "albedo": 0.2,
+        },
+    }
+    return cd
+
+
+@pytest.fixture
+def sim_cd_spec_corrected(sim_cd_default):
+    """PVsyst CapData extended with a synthetic ``PrecWat`` column.
+
+    The shipped PVsyst fixture does not include a PrecWat column; the
+    ``e2848_spec_corrected_poa`` sim tree references it directly. A
+    realistic-looking synthetic value (0.5-3 cm expressed in meters, matching
+    PVsyst units) is added so the preset can resolve end-to-end in tests.
+    """
+    cd = sim_cd_default
+    rng = np.random.default_rng(seed=43)
+    n = cd.data.shape[0]
+    cd.data["PrecWat"] = rng.uniform(0.005, 0.03, n)  # meters
+    cd.data_filtered = cd.data.copy(deep=True)
+    return cd
+
+
+@pytest.fixture
 def captest_yaml(tmp_path):
     """Minimal yaml file exercising CapTest.from_yaml.
 
