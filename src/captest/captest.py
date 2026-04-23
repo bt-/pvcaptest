@@ -1073,7 +1073,7 @@ class CapTest(param.Parameterized):
         return inst
 
     @classmethod
-    def from_yaml(cls, path, key="captest"):
+    def from_yaml(cls, path, key="captest", meas_loader=None, sim_loader=None):
         """Construct a CapTest from a yaml config file.
 
         Reads the sub-mapping at the given top-level ``key`` of the yaml
@@ -1086,6 +1086,13 @@ class CapTest(param.Parameterized):
             Path to a yaml file.
         key : str, default 'captest'
             Top-level key whose value is the CapTest sub-mapping.
+        meas_loader, sim_loader : callable or None, optional
+            Programmatic-only loader callables that override the default
+            resolution (``captest.io.load_data`` / ``captest.io.load_pvsyst``).
+            Supplied here because loader callables cannot be represented in
+            yaml. Useful for project wrappers (e.g. perfactory) that drive
+            yaml-based construction but need their own measured-data loader.
+            When ``None`` the default resolution applies.
 
         Returns
         -------
@@ -1145,6 +1152,15 @@ class CapTest(param.Parameterized):
 
         # ``null`` (None) in yaml is equivalent to omitting the key.
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
+
+        # Inject programmatic-only loader callables. Explicit kwargs win
+        # over any value that happened to slip through yaml (loaders are
+        # ``param.Callable`` so yaml would coerce-fail before reaching here,
+        # but be defensive).
+        if meas_loader is not None:
+            kwargs["meas_loader"] = meas_loader
+        if sim_loader is not None:
+            kwargs["sim_loader"] = sim_loader
 
         inst = cls.from_params(**kwargs)
         # Preserve the raw relative-or-absolute paths the user wrote in the

@@ -478,6 +478,114 @@ class TestFromYaml:
         CapTest.from_yaml(p)
         assert received["path"] == str(tmp_path / "subdir" / "meas.csv")
 
+    def test_from_yaml_forwards_meas_loader_kwarg(
+        self, tmp_path, meas_cd_default
+    ):
+        """A programmatic meas_loader passed to from_yaml wins over the default.
+
+        Downstream wrappers (e.g. perfactory) drive yaml-based construction
+        but need to inject their own measured-data loader because loader
+        callables cannot be represented in yaml.
+        """
+        text = "captest:\n  test_setup: e2848_default\n  meas_path: ./meas.csv\n"
+        p = self._write(tmp_path, text)
+        meas_loader = MagicMock(return_value=meas_cd_default)
+        capt = CapTest.from_yaml(p, meas_loader=meas_loader)
+        meas_loader.assert_called_once_with(str(tmp_path / "meas.csv"))
+        assert capt.meas is meas_cd_default
+
+    def test_from_yaml_forwards_sim_loader_kwarg(self, tmp_path, sim_cd_default):
+        """A programmatic sim_loader passed to from_yaml wins over the default."""
+        text = "captest:\n  test_setup: e2848_default\n  sim_path: ./sim.csv\n"
+        p = self._write(tmp_path, text)
+        sim_loader = MagicMock(return_value=sim_cd_default)
+        capt = CapTest.from_yaml(p, sim_loader=sim_loader)
+        sim_loader.assert_called_once_with(str(tmp_path / "sim.csv"))
+        assert capt.sim is sim_cd_default
+
+    def test_from_yaml_without_loader_kwargs_uses_default_resolution(
+        self, tmp_path, monkeypatch, meas_cd_default
+    ):
+        """Regression guard: omitting the new kwargs preserves prior behavior."""
+        text = "captest:\n  test_setup: e2848_default\n  meas_path: ./meas.csv\n"
+        p = self._write(tmp_path, text)
+        called = []
+
+        def fake_load_data(path, **kwargs):
+            called.append(path)
+            return meas_cd_default
+
+        monkeypatch.setattr("captest.io.load_data", fake_load_data)
+        CapTest.from_yaml(p)  # no meas_loader/sim_loader kwargs
+        assert called == [str(tmp_path / "meas.csv")]
+
+
+class TestLoadConfigPublicExport:
+    """``load_config`` is a public helper on the ``captest`` package root.
+
+    Downstream wrappers (notably perfactory's ``load_captest``) parse the
+    captest sub-mapping via this helper, apply project-specific defaults,
+    and then hand off to ``CapTest.from_params``. Keeping this helper
+    publicly importable from the package root (not just the submodule) is
+    part of the public API contract.
+    """
+
+    def test_importable_from_package_root(self):
+        import captest
+
+        assert hasattr(captest, "load_config")
+        assert captest.load_config is ct.load_config
+
+    def test_returns_sub_mapping(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        p.write_text(
+            "captest:\n"
+            "  test_setup: bifi_e2848_etotal\n"
+            "  ac_nameplate: 1234\n"
+        )
+        import captest
+
+        sub = captest.load_config(p)
+        assert sub["test_setup"] == "bifi_e2848_etotal"
+        assert sub["ac_nameplate"] == 1234
+
+    def test_missing_key_raises_keyerror_listing_available_keys(self, tmp_path):
+        """Missing top-level key surfaces a helpful error for downstream wrappers."""
+        p = tmp_path / "cfg.yaml"
+        p.write_text("client: barnhart\nsystem: {}\n")
+        import captest
+
+        with pytest.raises(KeyError, match="captest"):
+            captest.load_config(p)
+
+    def test_absent_optional_keys_are_absent_not_none(self, tmp_path):
+        """Post-condition for downstream ``dict.setdefault``: absent keys stay absent.
+
+        Perfactory and similar wrappers rely on ``setdefault`` to inject
+        conventional values; that breaks if ``load_config`` stamps missing
+        optional keys as ``None``.
+        """
+        p = tmp_path / "cfg.yaml"
+        p.write_text(
+            "captest:\n"
+            "  test_setup: e2848_default\n"
+            "  ac_nameplate: 1000\n"
+        )
+        import captest
+
+        sub = captest.load_config(p)
+        for absent_key in (
+            "meas_path",
+            "sim_path",
+            "meas_load_kwargs",
+            "sim_load_kwargs",
+            "rep_conditions",
+            "overrides",
+        ):
+            assert absent_key not in sub, (
+                f"Expected {absent_key!r} to be absent, got {sub[absent_key]!r}"
+            )
+
 
 class TestSetup:
     """Behavior of CapTest.setup()."""
