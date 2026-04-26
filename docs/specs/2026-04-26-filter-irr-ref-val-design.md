@@ -31,7 +31,7 @@ Backward compatibility: `"self_val"` is silently translated to `"rep_irr"` insid
 `filter_irr`. No deprecation warning is emitted (the package is pre-1.0). This translation
 will be removed in a future release.
 
-### 2. Validation guard in `filter_irr`
+### 2. Validation guard and resolution in `filter_irr`
 After any `"self_val"` → `"rep_irr"` translation, raise a `ValueError` with a specific
 message before attempting to access `self.rc`:
 
@@ -41,6 +41,10 @@ message before attempting to access `self.rc`:
 - If `self.rc` exists but lacks a `"poa"` column:
   `"ref_val='rep_irr' requires a 'poa' column in self.rc. The reporting conditions
   DataFrame does not have a 'poa' column."`
+
+After validation, resolve the sentinel using `self.rc["poa"].iloc[0]` (positional access)
+rather than the current `self.rc["poa"][0]` (index-label access), for the same robustness
+reason noted in Section 3.
 
 ### 3. Sentinel resolution in `update_summary` (Approach A)
 Immediately after `ret_val = func(self, *args, **kwargs)` and before `round_kwarg_floats`,
