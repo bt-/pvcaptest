@@ -2181,13 +2181,27 @@ class TestFilterTime:
         assert df.index[0] == pd.Timestamp(year=1990, month=2, day=1, hour=0)
         assert df.index[-1] == pd.Timestamp(year=1990, month=2, day=15, hour=00)
 
-    def test_start_no_days(self, pvsyst):
-        with pytest.warns(UserWarning):
-            pvsyst.filter_time(start="2/1/90")
+    def test_start_no_end_uses_last_timestamp(self, pvsyst):
+        """Verify that omitting end defaults to the last timestamp of data_filtered."""
+        last_ts = pvsyst.data_filtered.index[-1]
+        pvsyst.filter_time(start="2/1/90")
+        assert pvsyst.data_filtered.index[0] == pd.Timestamp(year=1990, month=2, day=1, hour=0)
+        assert pvsyst.data_filtered.index[-1] == last_ts
 
-    def test_end_no_days(self, pvsyst):
-        with pytest.warns(UserWarning):
-            pvsyst.filter_time(end="2/1/90")
+    def test_end_no_start_uses_first_timestamp(self, pvsyst):
+        """Verify that omitting start defaults to the first timestamp of data_filtered."""
+        first_ts = pvsyst.data_filtered.index[0]
+        pvsyst.filter_time(end="11/1/90")
+        assert pvsyst.data_filtered.index[0] == first_ts
+        assert pvsyst.data_filtered.index[-1] == pd.Timestamp(year=1990, month=11, day=1, hour=0)
+
+    def test_start_no_end_respects_prefilterd_boundary(self, pvsyst):
+        """Verify end default reflects data_filtered boundary after a prior filter."""
+        pvsyst.filter_time(start="1/1/90", end="6/30/90")
+        last_ts = pvsyst.data_filtered.index[-1]
+        pvsyst.filter_time(start="3/1/90")
+        assert pvsyst.data_filtered.index[0] == pd.Timestamp(year=1990, month=3, day=1, hour=0)
+        assert pvsyst.data_filtered.index[-1] == last_ts
 
     def test_test_date_no_days(self, pvsyst):
         with pytest.warns(UserWarning):

@@ -2304,11 +2304,15 @@ class CapData(object):
         start : str or pd.Timestamp or None, default None
             Start date for data to be returned.  If a string is passed it must
             be in format that can be converted by pandas.to_datetime.  Not
-            required if test_date and days arguments are passed.
+            required if test_date and days arguments are passed.  If not
+            provided and days is also not provided, defaults to the first
+            timestamp in data_filtered.
         end : str or pd.Timestamp or None, default None
             End date for data to be returned.  If a string is passed it must
             be in format that can be converted by pandas.to_datetime.  Not
-            required if test_date and days arguments are passed.
+            required if test_date and days arguments are passed.  If not
+            provided and days is also not provided, defaults to the last
+            timestamp in data_filtered.
         drop : bool, default False
             Set to true to drop time period between `start` and `end` rather
             than keep it. Must supply `start` and `end` and `wrap_year` must
@@ -2345,7 +2349,9 @@ class CapData(object):
 
         if start is not None and end is None:
             if days is None:
-                return warnings.warn("Must specify end date or days.")
+                start = pd.to_datetime(start)
+                end = self.data_filtered.index[-1]
+                df_temp = self.data_filtered.loc[start:end, :]
             else:
                 start = pd.to_datetime(start)
                 end = start + pd.DateOffset(days=days)
@@ -2356,7 +2362,9 @@ class CapData(object):
 
         if start is None and end is not None:
             if days is None:
-                return warnings.warn("Must specify end date or days.")
+                end = pd.to_datetime(end)
+                start = self.data_filtered.index[0]
+                df_temp = self.data_filtered.loc[start:end, :]
             else:
                 end = pd.to_datetime(end)
                 start = end - pd.DateOffset(days=days)
