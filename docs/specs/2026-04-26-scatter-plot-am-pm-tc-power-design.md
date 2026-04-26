@@ -41,36 +41,68 @@ support for tc-power.
   `tc_power_calc` explicitly).
 
 ## High-level design
-A new public `param.Parameterized` class `ScatterPlot` lives in a new
-module `src/captest/scatter_plots.py`. The shipped TEST_SETUPS callables
-become 1-line wrappers that instantiate it. Composable module-level
-helpers do the AM/PM and tc-power work and are independently usable in
-notebooks and dashboards.
+A new public `param.Parameterized` class `ScatterPlot` is added to the
+existing `src/captest/plotting.py` module alongside the rest of the
+plotting code. The shipped TEST_SETUPS callables become 1-line wrappers
+that instantiate it. Composable helpers do the AM/PM and tc-power work
+and are independently usable in notebooks and dashboards.
 ### Module layout
-- New module: `src/captest/scatter_plots.py`
+- `src/captest/plotting.py` (existing module) gains:
   - `class ScatterPlot(param.Parameterized)`
   - `class ScatterBifiPowerTc(ScatterPlot)` (2-panel variant)
-  - `def detect_solar_noon(data, ghi_col="ghi_mod_csky", default="12:30")`
   - `def add_am_pm_dim(df, split_time)`
   - `def calc_tc_power_column(cd, tc_power_calc, col_name="power_tc_plot", verbose=False, force_recompute=False)`
   - `DEFAULT_TC_POWER_CALC` module constant
   - `TC_POWER_PLOT_COL = "power_tc_plot"` constant
+- `src/captest/util.py` (existing module) gains:
+  - `def detect_solar_noon(data, ghi_col="ghi_mod_csky", default="12:30") -> str`
+  (this helper is generally useful beyond plotting, so it lives in
+  `util` rather than `plotting`).
 - `src/captest/captest.py` is modified to:
-  - Import the wrapper functions from `scatter_plots.py`.
-  - Replace bodies of `scatter_default`, `scatter_etotal`,
+  - Add `from captest.plotting import ScatterPlot, ScatterBifiPowerTc`.
+  - Replace bodies of `scatter_default`, `scatter_etotal`, and
     `scatter_bifi_power_tc` with 1-line `ScatterPlot(...).view()` /
     `ScatterBifiPowerTc(...).view()` calls. Public symbols and
     signatures unchanged.
-- `src/captest/__init__.py`: re-export `ScatterPlot`,
-  `detect_solar_noon`, `add_am_pm_dim`, `calc_tc_power_column` from
-  the new module so existing `from captest import ...` import sites are
-  uniform.
+- `src/captest/__init__.py` is NOT modified. The new helpers and
+  classes are imported from their host modules
+  (`from captest.plotting import ScatterPlot`,
+  `from captest.util import detect_solar_noon`, etc.). Keeping the
+  package root unchanged avoids API churn.
+### Avoiding the circular import
+`capdata.py` already does `from captest import plotting` at module top.
+If `plotting.py` were to add a top-level `from captest.capdata import
+CapData` to declare `cd = param.ClassSelector(class_=CapData)`, the
+modules would form a cycle: `capdata` is partially initialized when
+`plotting` runs, and `CapData` (defined far down in `capdata.py`) would
+not yet be importable, raising `ImportError`.
+Resolution: declare `ScatterPlot.cd` as a plain `param.Parameter` and
+use a `typing.TYPE_CHECKING` block to import `CapData` only for IDE /
+mypy hints. Concretely:
+```python
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from captest.capdata import CapData  # type: ignore
+
+class ScatterPlot(param.Parameterized):
+    cd: "CapData | None" = param.Parameter(
+        default=None,
+        precedence=-1,
+        doc="CapData instance whose data + column groups drive the plot.",
+    )
+```
+This keeps the import graph one-directional (`capdata -> plotting`)
+without function-local imports. Runtime type errors still surface from
+`view()` when `self.cd` is accessed, with clear messages.
 
 ### `ScatterPlot` parameter surface
 ```python
 class ScatterPlot(param.Parameterized):
-    # Data binding
-    cd = param.ClassSelector(class_=CapData, default=None, precedence=-1)
+    # Data binding (typed via TYPE_CHECKING to dodge the circular import)
+    cd: "CapData | None" = param.Parameter(
+        default=None, precedence=-1,
+        doc="CapData instance whose data + column groups drive the plot.",
+    )
     filtered = param.Boolean(True)
 
     # AM/PM split
@@ -106,7 +138,7 @@ class ScatterPlot(param.Parameterized):
 ### Wrapper integration with TEST_SETUPS
 ```python
 # src/captest/captest.py
-from captest.scatter_plots import ScatterPlot, ScatterBifiPowerTc
+from captest.plotting import ScatterPlot, ScatterBifiPowerTc
 
 def scatter_default(cd, **kwargs):
     return ScatterPlot(cd=cd, **kwargs).view()
@@ -264,9 +296,10 @@ layout itself will be designed when the dashboard work begins.
 ## Testing strategy
 All new tests use pytest (project rule).
 
-- `tests/test_scatter_plots.py`:
+- `tests/test_util.py` (extend existing):
   - `detect_solar_noon`: with `ghi_mod_csky` present, with absent
     column (warn + default), with empty index (warn + default).
+- `tests/test_plotting.py` (extend existing if present, else create):
   - `add_am_pm_dim`: correct categorization, ValueError on bad
     `split_time`.
   - `calc_tc_power_column`: writes to `cd.data` and
@@ -285,16 +318,17 @@ All new tests use pytest (project rule).
   change (single-element Layout containing a Scatter).
 
 ## Implementation steps (for the follow-on plan)
-1. Create `src/captest/scatter_plots.py` with helpers and
-   `DEFAULT_TC_POWER_CALC`.
-2. Implement `ScatterPlot` with `split_day` + tc-power logic.
-3. Implement `ScatterBifiPowerTc` subclass.
-4. Refactor wrappers in `captest.py`.
-5. Re-export from `__init__.py`.
-6. Add tests.
-7. Update `docs/userguide` (or equivalent) with a short section on the
+1. Add `detect_solar_noon` to `src/captest/util.py`.
+2. Extend `src/captest/plotting.py` with `add_am_pm_dim`,
+   `calc_tc_power_column`, `DEFAULT_TC_POWER_CALC`, `TC_POWER_PLOT_COL`,
+   the `TYPE_CHECKING` import of `CapData`, and `ScatterPlot`.
+3. Add `ScatterBifiPowerTc` subclass to `src/captest/plotting.py`.
+4. Refactor wrappers in `src/captest/captest.py` (single import line
+   from `captest.plotting`; 1-line bodies for the three callables).
+5. Add tests in `tests/test_util.py` and `tests/test_plotting.py`.
+6. Update `docs/userguide` (or equivalent) with a short section on the
    new options.
-8. Run `just lint`, `just fmt`, `just test`.
+7. Run `just lint`, `just fmt`, `just test`.
 
 ## Open questions / deferred
 - Per-day solar noon detection.
