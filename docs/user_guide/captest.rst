@@ -278,6 +278,137 @@ scatter callable on either side:
     ct.scatter_plots()              # measured scatter (hv.Layout)
     ct.scatter_plots(which='sim')   # modeled scatter
 
+Customizing scatter plots
+-------------------------
+The shipped scatter callables
+(:py:func:`~captest.captest.scatter_default`,
+:py:func:`~captest.captest.scatter_etotal`,
+:py:func:`~captest.captest.scatter_bifi_power_tc`) are thin wrappers around
+:py:class:`~captest.plotting.ScatterPlot` and
+:py:class:`~captest.plotting.ScatterBifiPowerTc`. Every keyword argument
+passed through :py:meth:`~captest.captest.CapTest.scatter_plots` is
+forwarded to the underlying class, so the AM/PM split, temperature-corrected
+power view, and linked-timeseries pairing are all accessible from the
+canonical call site.
+
+AM/PM split
+~~~~~~~~~~~
+Pass ``split_day=True`` to render morning and afternoon points as two
+overlaid scatters with distinct color and marker. By default, the split
+time is picked from clear-sky GHI when available and falls back to
+``"12:30"`` otherwise:
+
+.. code-block:: Python
+
+    ct.scatter_plots(split_day=True)
+
+When ``split_time`` is left as ``None``,
+:py:func:`~captest.util.detect_solar_noon` is called on ``cd.data`` to
+find the clock time where the per-time-of-day mean of the
+``ghi_mod_csky`` column peaks. If the column is absent
+(:py:func:`~captest.io.load_data` only adds it when called with a ``site``
+dict) a :py:class:`UserWarning` is emitted and the default ``"12:30"``
+is used. To override the boundary explicitly, pass
+``split_time="HH:MM"``:
+
+.. code-block:: Python
+
+    ct.scatter_plots(split_day=True, split_time='12:45')
+
+The AM and PM glyph styles can also be overridden via ``am_color``,
+``pm_color``, ``am_marker``, and ``pm_marker``.
+
+Temperature-corrected power axis
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+For presets where ``power`` is the raw measured power (``e2848_default``,
+``bifi_e2848_etotal``, ``e2848_spec_corrected_poa``), passing
+``tc_power=True`` swaps the y-axis to a temperature-corrected power
+column computed via
+:py:func:`~captest.calcparams.power_temp_correct`. The calculation is
+driven by a calc-params nested dict (the same grammar used by
+``TEST_SETUPS`` ``reg_cols_*`` values) and is **isolated** from
+:py:meth:`~captest.capdata.CapData.process_regression_columns` — it only
+adds a single ``power_tc_plot`` column to ``cd.data`` /
+``cd.data_filtered`` and never mutates
+:py:attr:`~captest.capdata.CapData.regression_cols` or
+:py:attr:`~captest.capdata.CapData.regression_formula`.
+
+.. code-block:: Python
+
+    # Uses captest.plotting.DEFAULT_TC_POWER_CALC, tuned for measured
+    # DAS data with the standard column-group inference.
+    ct.scatter_plots(tc_power=True)
+
+    # Sim or non-default measurement setups: pass an explicit
+    # tc_power_calc dict that matches your column groups / column names.
+    from captest.calcparams import cell_temp
+    sim_calc = {
+        'power': 'E_Grid',
+        'cell_temp': 'TArray',
+    }
+    ct.scatter_plots(which='sim', tc_power=True, tc_power_calc=sim_calc)
+
+The layout strategy is controlled by ``tc_mode``:
+
+- ``'replace'`` (default) — single panel; y-axis is the tc-power column.
+- ``'add_panel'`` — two-panel ``hv.Layout`` with the raw-power scatter
+  on top and the tc-power scatter below.
+- ``'overlay'`` — single panel with both scatters overlaid for direct
+  comparison.
+
+.. note::
+
+    The default ``tc_power_calc`` references the column groups
+    ``real_pwr_mtr``, ``irr_poa``, and ``temp_bom``. If your
+    ``CapData`` does not include a measured back-of-module temperature
+    group ``temp_bom`` — for example, when only ambient temperature
+    and wind speed are available —
+    :py:func:`~captest.plotting.calc_tc_power_column` raises a
+    :py:class:`KeyError` listing the missing groups. Pass an explicit
+    ``tc_power_calc`` whose ``cell_temp`` branch derives BOM via
+    :py:func:`~captest.calcparams.bom_temp` from
+    ``poa`` / ``temp_amb`` / ``wind_speed``, mirroring the
+    ``bifi_power_tc`` preset's ``reg_cols_meas['power']``.
+
+For the ``bifi_power_tc`` preset, ``power`` is already temperature-
+corrected and ``tc_power=True`` is ignored with a
+:py:class:`UserWarning`.
+
+Linked timeseries pairing
+~~~~~~~~~~~~~~~~~~~~~~~~~
+Pass ``timeseries=True`` to add a linked timeseries panel beneath the
+principal scatter. Selections in the scatter highlight the corresponding
+points in the timeseries panel and vice versa. The timeseries pairing
+is incompatible with ``tc_mode='add_panel'``; combining the two raises
+:py:class:`ValueError`.
+
+.. code-block:: Python
+
+    ct.scatter_plots(timeseries=True)
+    ct.scatter_plots(split_day=True, tc_power=True, tc_mode='overlay',
+                     timeseries=True)
+
+Direct ScatterPlot use and dashboards
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+:py:class:`~captest.plotting.ScatterPlot` can also be instantiated
+directly when more interactive control is desired. Every view-affecting
+parameter is decorated with ``@param.depends``, so the class drops into
+a ``panel`` dashboard without any wrapping:
+
+.. code-block:: Python
+
+    from captest.plotting import ScatterPlot
+    sp = ScatterPlot(cd=ct.meas, split_day=True, tc_power=True)
+    sp.view()                      # hv.Layout
+    # In a notebook, swap parameters live and re-render:
+    sp.tc_mode = 'overlay'
+    sp.view()
+
+:py:class:`~captest.plotting.ScatterBifiPowerTc` is the two-panel
+subclass used by the ``bifi_power_tc`` preset. ``split_day`` and
+``timeseries`` are inherited; when ``timeseries=True`` only the first
+panel (``power vs poa``) is paired with a linked timeseries view.
+
 Overrides and the ``"custom"`` setup
 ------------------------------------
 Every preset-level value can be overridden per instance without redefining the

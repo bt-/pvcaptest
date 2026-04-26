@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- New `ScatterPlot` and `ScatterBifiPowerTc` classes in `captest.plotting`
+that power the shipped scatter callables (`scatter_default`, `scatter_etotal`,
+`scatter_bifi_power_tc`). Both are `param.Parameterized` with `view()`
+methods decorated with `@param.depends`, so they drop directly into a
+`panel` dashboard.
+- New `split_day` / `split_time` / `am_color` / `pm_color` /
+`am_marker` / `pm_marker` keyword arguments on the shipped scatter
+callables (forwarded by `CapTest.scatter_plots`). Renders morning and
+afternoon points as two overlaid scatters with distinct glyphs. When
+`split_time` is `None`, the boundary is detected from clear-sky GHI via
+the new `captest.util.detect_solar_noon` helper, falling back to `12:30`
+with a warning.
+- New `tc_power` / `tc_mode` / `tc_power_calc` / `tc_force_recompute`
+keyword arguments on the shipped scatter callables. When `tc_power=True`,
+the scatter swaps to a temperature-corrected power y-axis (or adds a
+second panel / overlay, per `tc_mode`). The calculation is isolated from
+`process_regression_columns` and only adds a `power_tc_plot` column to
+`cd.data` / `cd.data_filtered`. `captest.plotting.DEFAULT_TC_POWER_CALC`
+is tuned for measured DAS data; sim-side users pass an explicit
+`tc_power_calc` dict.
+- New `timeseries` keyword argument on the shipped scatter callables.
+Pairs the principal scatter with a linked timeseries panel so selections
+propagate between the two. Raises `ValueError` when combined with
+`tc_mode='add_panel'`.
+- New `captest.plotting.add_am_pm_dim`, `captest.plotting.calc_tc_power_column`,
+and `captest.util.detect_solar_noon` composable helpers reusable outside
+the `ScatterPlot` flow (e.g. in notebooks or downstream wrappers).
 - New `CapTest` class (`captest.captest.CapTest`) — a `param.Parameterized`
 container that binds a measured and a modeled `CapData` together, holds every
 test-level setting (regression formula, reporting-conditions recipe, filter
