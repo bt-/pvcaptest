@@ -11,7 +11,7 @@ The shipped `scatter_plots` callables for `TEST_SETUPS` (`scatter_default`,
 formula-agnostic but visually flat:
 
 - They cannot show morning vs afternoon points differently, which is a
-  common diagnostic for soiling, tracker bias, and dew effects.
+  common diagnostic for irradiance sensor alignment and other investigations.
 - They cannot show `power` plotted as temperature-corrected power on
   presets where `power` is raw (`e2848_default`, `bifi_e2848_etotal`,
   `e2848_spec_corrected_poa`).
@@ -52,7 +52,7 @@ notebooks and dashboards.
   - `class ScatterBifiPowerTc(ScatterPlot)` (2-panel variant)
   - `def detect_solar_noon(data, ghi_col="ghi_mod_csky", default="12:30")`
   - `def add_am_pm_dim(df, split_time)`
-  - `def ensure_tc_power_column(cd, tc_power_calc, col_name="power_tc_plot", verbose=False, force_recompute=False)`
+  - `def calc_tc_power_column(cd, tc_power_calc, col_name="power_tc_plot", verbose=False, force_recompute=False)`
   - `DEFAULT_TC_POWER_CALC` module constant
   - `TC_POWER_PLOT_COL = "power_tc_plot"` constant
 - `src/captest/captest.py` is modified to:
@@ -62,7 +62,7 @@ notebooks and dashboards.
     `ScatterBifiPowerTc(...).view()` calls. Public symbols and
     signatures unchanged.
 - `src/captest/__init__.py`: re-export `ScatterPlot`,
-  `detect_solar_noon`, `add_am_pm_dim`, `ensure_tc_power_column` from
+  `detect_solar_noon`, `add_am_pm_dim`, `calc_tc_power_column` from
   the new module so existing `from captest import ...` import sites are
   uniform.
 
@@ -138,9 +138,11 @@ panels, an `Overlay` when `split_day=True`, both relabel-compatible).
 - DST handling: relies on naive clock time via `between_time` semantics;
   this matches user mental model (split at "wall-clock noon").
 
-### `ensure_tc_power_column(cd, tc_power_calc, col_name="power_tc_plot", verbose=False, force_recompute=False) -> str`
+### `calc_tc_power_column(cd, tc_power_calc, col_name="power_tc_plot", verbose=False, force_recompute=False) -> str`
+Calculates the temperature-corrected power column from the calc-params
+expression and writes it to `cd.data` / `cd.data_filtered`.
 - If `col_name` already exists in `cd.data` and `force_recompute is
-  False`, returns `col_name` immediately.
+  False`, returns `col_name` immediately (no recomputation).
 - Wraps `captest.util.transform_calc_params` to evaluate the
   `tc_power_calc` expression. The result Series is written to
   `cd.data[col_name]` AND `cd.data_filtered[col_name]` (preserving the
@@ -154,7 +156,9 @@ panels, an `Overlay` when `split_day=True`, both relabel-compatible).
 
 ### `DEFAULT_TC_POWER_CALC`
 Tuned for measured DAS data following the standard column-group
-inference (`captest.columngroups.group_columns`):
+inference (`captest.columngroups.group_columns`). Assumes a measured
+back-of-module temperature group (`temp_bom`) is available; this is
+faster and avoids round-tripping wind/ambient through `bom_temp`:
 ```python
 DEFAULT_TC_POWER_CALC = {
     "power": ("real_pwr_mtr", "sum"),
@@ -162,18 +166,16 @@ DEFAULT_TC_POWER_CALC = {
         cell_temp,
         {
             "poa": ("irr_poa", "mean"),
-            "bom": (
-                bom_temp,
-                {
-                    "poa": ("irr_poa", "mean"),
-                    "temp_amb": ("temp_amb", "mean"),
-                    "wind_speed": ("wind_speed", "mean"),
-                },
-            ),
+            "bom": ("temp_bom", "mean"),
         },
     ),
 }
 ```
+If `temp_bom` is not present in `cd.column_groups`, `calc_tc_power_column`
+raises a `KeyError` directing the user to pass an explicit
+`tc_power_calc` (for example, the bifi-style nested dict that derives
+BOM via `bom_temp` from poa, temp_amb, and wind_speed).
+
 Sim users must pass `tc_power_calc` explicitly (raw column references
 into PVsyst output, e.g. `{"power": "E_Grid", "cell_temp": "TArray"}`).
 ### `ScatterPlot.view() -> hv.Layout`
@@ -188,7 +190,7 @@ Logical flow:
      (`cd.regression_formula` lhs resolves to a column whose name is
      `power_temp_correct.__name__`), emit a `UserWarning` and skip the
      extra calc; treat `tc_mode` as `replace`.
-   - Otherwise call `ensure_tc_power_column(cd, tc_power_calc,
+   - Otherwise call `calc_tc_power_column(cd, tc_power_calc,
      force_recompute=self.tc_force_recompute)` and join the resulting
      column onto `df` by index from `cd.data_filtered` (or `cd.data`
      when `filtered=False`).
@@ -226,12 +228,15 @@ Subclass that overrides the principal scatter construction for the
 - Does NOT use `tc_power` (warns and ignores) — the regression `power`
   is already tc-corrected for this preset.
 
-### Dashboard support
-`ScatterPlot.dashboard()` returns `pn.Row(self.param, self.view)`. All
-view-affecting parameters are decorated with `@param.depends(...)` so
-the dashboard rerenders on widget changes. Out of scope: panel layout
-polish (sliders/tabs/etc.). The `dashboard()` method exists for the
-follow-on dashboard work; it doesn't have to look pretty in this PR.
+### Dashboard readiness
+`ScatterPlot.view` is decorated with `@param.depends(...)` listing every
+view-affecting parameter (`split_day`, `split_time`, `am_color`,
+`pm_color`, `am_marker`, `pm_marker`, `tc_power`, `tc_mode`,
+`tc_power_calc`, `tc_force_recompute`, `timeseries`, `filtered`,
+`height`, `width`). This makes the class drop-in compatible with a
+future `pn.Row(self.param, self.view)` dashboard wiring without
+changes. No `dashboard()` method is shipped in this PR — the dashboard
+layout itself will be designed when the dashboard work begins.
 
 ## Backward compatibility
 - `scatter_default`, `scatter_etotal`, `scatter_bifi_power_tc` keep
@@ -264,7 +269,7 @@ All new tests use pytest (project rule).
     column (warn + default), with empty index (warn + default).
   - `add_am_pm_dim`: correct categorization, ValueError on bad
     `split_time`.
-  - `ensure_tc_power_column`: writes to `cd.data` and
+  - `calc_tc_power_column`: writes to `cd.data` and
     `cd.data_filtered`, idempotent on second call, recomputes when
     `force_recompute=True`, raises on missing column group.
   - `ScatterPlot.view`: returns `hv.Layout`; overlay shape on
