@@ -453,7 +453,9 @@ class TestAbsoluteAirmass:
             pressure_scale=1,
             verbose=False,
         )
-        rel = pvlib.atmosphere.get_relative_airmass(df["zenith"], model="kastenyoung1989")
+        rel = pvlib.atmosphere.get_relative_airmass(
+            df["zenith"], model="kastenyoung1989"
+        )
         expected = pvlib.atmosphere.get_absolute_airmass(rel, df["pressure_pa"])
         np.testing.assert_allclose(result.values, expected.values)
 
@@ -478,9 +480,7 @@ class TestAbsoluteAirmass:
         # percentile position (n * 0.05 = 5) so they don't bias the check.
         pressure[0] = -9999.0
         pressure[-1] = 99999.0
-        df = pd.DataFrame(
-            {"zenith": np.full(n, 45.0), "pressure": pressure}, index=ix
-        )
+        df = pd.DataFrame({"zenith": np.full(n, 45.0), "pressure": pressure}, index=ix)
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             calcparams.absolute_airmass(

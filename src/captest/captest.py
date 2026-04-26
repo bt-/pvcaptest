@@ -1201,9 +1201,7 @@ class CapTest(param.Parameterized):
         CapTest
         """
         if not isinstance(sub, dict):
-            raise TypeError(
-                f"'sub' must be a mapping; got {type(sub).__name__}."
-            )
+            raise TypeError(f"'sub' must be a mapping; got {type(sub).__name__}.")
 
         # Unknown-key detection with Levenshtein suggestion.
         for k in sub:

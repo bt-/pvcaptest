@@ -503,9 +503,7 @@ class TestFromYaml:
         CapTest.from_yaml(p)
         assert received["path"] == str(tmp_path / "subdir" / "meas.csv")
 
-    def test_from_yaml_forwards_meas_loader_kwarg(
-        self, tmp_path, meas_cd_default
-    ):
+    def test_from_yaml_forwards_meas_loader_kwarg(self, tmp_path, meas_cd_default):
         """A programmatic meas_loader passed to from_yaml wins over the default.
 
         Downstream wrappers (e.g. perfactory) drive yaml-based construction
@@ -573,9 +571,7 @@ class TestFromMapping:
         }
         meas_loader = MagicMock(return_value=meas_cd_default)
         sim_loader = MagicMock(return_value=sim_cd_default)
-        capt = CapTest.from_mapping(
-            sub, meas_loader=meas_loader, sim_loader=sim_loader
-        )
+        capt = CapTest.from_mapping(sub, meas_loader=meas_loader, sim_loader=sim_loader)
         assert capt.ac_nameplate == 100
         meas_loader.assert_called_once_with(str(meas_file))
         sim_loader.assert_called_once_with(str(sim_file))
@@ -586,9 +582,7 @@ class TestFromMapping:
 
     def test_rejects_unknown_keys(self):
         with pytest.raises(ValueError, match="ac_namplate"):
-            CapTest.from_mapping(
-                {"test_setup": "e2848_default", "ac_namplate": 1}
-            )
+            CapTest.from_mapping({"test_setup": "e2848_default", "ac_namplate": 1})
 
     def test_rejects_non_mapping_sub(self):
         with pytest.raises(TypeError, match="sub"):
@@ -612,9 +606,7 @@ class TestFromMapping:
             "meas_path": "./meas.csv",
         }
         meas_loader = MagicMock(return_value=meas_cd_default)
-        CapTest.from_mapping(
-            sub, base_dir=tmp_path, meas_loader=meas_loader
-        )
+        CapTest.from_mapping(sub, base_dir=tmp_path, meas_loader=meas_loader)
         meas_loader.assert_called_once_with(str(tmp_path / "meas.csv"))
 
     def test_uri_scheme_path_skips_resolution(self, meas_cd_default):
@@ -684,14 +676,10 @@ class TestFromMapping:
         }
         snapshot = dict(sub)
         meas_loader = MagicMock(return_value=meas_cd_default)
-        CapTest.from_mapping(
-            sub, base_dir=tmp_path, meas_loader=meas_loader
-        )
+        CapTest.from_mapping(sub, base_dir=tmp_path, meas_loader=meas_loader)
         assert sub == snapshot, "from_mapping must not mutate the sub-mapping"
 
-    def test_preserves_raw_meas_path_for_round_trip(
-        self, tmp_path, meas_cd_default
-    ):
+    def test_preserves_raw_meas_path_for_round_trip(self, tmp_path, meas_cd_default):
         """The raw (possibly relative) meas_path is stored on _meas_path so
         a later to_yaml emits what the user originally wrote."""
         meas_file = tmp_path / "meas.csv"
@@ -701,9 +689,7 @@ class TestFromMapping:
             "meas_path": "./meas.csv",
         }
         meas_loader = MagicMock(return_value=meas_cd_default)
-        capt = CapTest.from_mapping(
-            sub, base_dir=tmp_path, meas_loader=meas_loader
-        )
+        capt = CapTest.from_mapping(sub, base_dir=tmp_path, meas_loader=meas_loader)
         assert capt._meas_path == "./meas.csv"
 
     def test_from_yaml_delegates_to_from_mapping(
@@ -716,9 +702,7 @@ class TestFromMapping:
         unchanged to ``from_mapping``.
         """
         p = tmp_path / "cfg.yaml"
-        p.write_text(
-            "captest:\n  test_setup: e2848_default\n  ac_nameplate: 42\n"
-        )
+        p.write_text("captest:\n  test_setup: e2848_default\n  ac_nameplate: 42\n")
         recorded = {}
 
         real_from_mapping = CapTest.from_mapping
@@ -768,9 +752,7 @@ class TestLoadConfigPublicExport:
     def test_returns_sub_mapping(self, tmp_path):
         p = tmp_path / "cfg.yaml"
         p.write_text(
-            "captest:\n"
-            "  test_setup: bifi_e2848_etotal\n"
-            "  ac_nameplate: 1234\n"
+            "captest:\n  test_setup: bifi_e2848_etotal\n  ac_nameplate: 1234\n"
         )
         import captest
 
@@ -795,11 +777,7 @@ class TestLoadConfigPublicExport:
         optional keys as ``None``.
         """
         p = tmp_path / "cfg.yaml"
-        p.write_text(
-            "captest:\n"
-            "  test_setup: e2848_default\n"
-            "  ac_nameplate: 1000\n"
-        )
+        p.write_text("captest:\n  test_setup: e2848_default\n  ac_nameplate: 1000\n")
         import captest
 
         sub = captest.load_config(p)
