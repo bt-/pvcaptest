@@ -169,6 +169,9 @@ def update_summary(func):
 
         ret_val = func(self, *args, **kwargs)
 
+        if kwargs.get("ref_val") in ("rep_irr", "self_val") and self.rc is not None:
+            kwargs = {**kwargs, "ref_val": float(self.rc["poa"].iloc[0])}
+
         arg_str = args.__repr__()
         lst = arg_str.split(",")
         arg_lst = [item.strip("()") for item in lst]
@@ -2167,9 +2170,10 @@ class CapData(object):
             Minimum value as fraction (0.8) or absolute 200 (W/m^2).
         high : float or int
             Max value as fraction (1.2) or absolute 800 (W/m^2).
-        ref_val : float or int or `self_val`
+        ref_val : float or int or 'rep_irr'
             Must provide arg when `low` and `high` are fractions.
-            Pass `self_val` to use the value in `self.rc`.
+            Pass ``'rep_irr'`` to use the reporting irradiance from ``self.rc``
+            (set by calling :meth:`rep_cond` first).
         col_name : str, default None
             Column name of irradiance data to filter.  By default uses the POA
             irradiance set in regression_cols attribute or average of the POA
@@ -2189,7 +2193,20 @@ class CapData(object):
             irr_col = col_name
 
         if ref_val == "self_val":
-            ref_val = self.rc["poa"][0]
+            ref_val = "rep_irr"
+
+        if ref_val == "rep_irr":
+            if self.rc is None:
+                raise ValueError(
+                    "ref_val='rep_irr' requires reporting conditions to be set. "
+                    "Call rep_cond() before calling filter_irr() with ref_val='rep_irr'."
+                )
+            if "poa" not in self.rc.columns:
+                raise ValueError(
+                    "ref_val='rep_irr' requires a 'poa' column in self.rc. "
+                    "The reporting conditions DataFrame does not have a 'poa' column."
+                )
+            ref_val = self.rc["poa"].iloc[0]
 
         df_flt = filter_irr(self.data_filtered, irr_col, low, high, ref_val=ref_val)
         if inplace:

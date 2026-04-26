@@ -2109,8 +2109,36 @@ class TestFilterIrr:
     def test_refval_use_attribute(self, nrel):
         nrel.rc = pd.DataFrame({"poa": 500, "w_vel": 1, "t_amb": 20}, index=[0])
         pts_before = nrel.data_filtered.shape[0]
+        nrel.filter_irr(0.8, 1.2, ref_val="rep_irr", col_name=None, inplace=True)
+        assert nrel.data_filtered.shape[0] < pts_before
+
+    def test_refval_self_val_translation(self, nrel):
+        """'self_val' is silently translated to 'rep_irr' and filters correctly."""
+        nrel.rc = pd.DataFrame({"poa": 500, "w_vel": 1, "t_amb": 20}, index=[0])
+        pts_before = nrel.data_filtered.shape[0]
         nrel.filter_irr(0.8, 1.2, ref_val="self_val", col_name=None, inplace=True)
         assert nrel.data_filtered.shape[0] < pts_before
+
+    def test_refval_rep_irr_shows_in_summary(self, nrel):
+        """Resolved numeric value appears in summary, not the sentinel string."""
+        nrel.rc = pd.DataFrame({"poa": 500.0, "w_vel": 1, "t_amb": 20}, index=[0])
+        nrel.filter_irr(0.8, 1.2, ref_val="rep_irr")
+        summary = nrel.get_summary()
+        filter_args = summary["filter_arguments"].iloc[0]
+        assert "rep_irr" not in filter_args
+        assert "np." not in filter_args
+        assert "500" in filter_args
+
+    def test_refval_rep_irr_rc_none_raises(self, nrel):
+        """ValueError is raised when ref_val='rep_irr' and self.rc is None."""
+        with pytest.raises(ValueError, match="Call rep_cond\\(\\) before"):
+            nrel.filter_irr(0.8, 1.2, ref_val="rep_irr")
+
+    def test_refval_rep_irr_no_poa_col_raises(self, nrel):
+        """ValueError when self.rc exists but has no 'poa' column."""
+        nrel.rc = pd.DataFrame({"irr": 500, "w_vel": 1, "t_amb": 20}, index=[0])
+        with pytest.raises(ValueError, match="does not have a 'poa' column"):
+            nrel.filter_irr(0.8, 1.2, ref_val="rep_irr")
 
     def test_refval_withcol_notinplace(self, nrel):
         pts_before = nrel.data_filtered.shape[0]
@@ -2185,7 +2213,9 @@ class TestFilterTime:
         """Verify that omitting end defaults to the last timestamp of data_filtered."""
         last_ts = pvsyst.data_filtered.index[-1]
         pvsyst.filter_time(start="2/1/90")
-        assert pvsyst.data_filtered.index[0] == pd.Timestamp(year=1990, month=2, day=1, hour=0)
+        assert pvsyst.data_filtered.index[0] == pd.Timestamp(
+            year=1990, month=2, day=1, hour=0
+        )
         assert pvsyst.data_filtered.index[-1] == last_ts
 
     def test_end_no_start_uses_first_timestamp(self, pvsyst):
@@ -2193,14 +2223,18 @@ class TestFilterTime:
         first_ts = pvsyst.data_filtered.index[0]
         pvsyst.filter_time(end="11/1/90")
         assert pvsyst.data_filtered.index[0] == first_ts
-        assert pvsyst.data_filtered.index[-1] == pd.Timestamp(year=1990, month=11, day=1, hour=0)
+        assert pvsyst.data_filtered.index[-1] == pd.Timestamp(
+            year=1990, month=11, day=1, hour=0
+        )
 
     def test_start_no_end_respects_prefilterd_boundary(self, pvsyst):
         """Verify end default reflects data_filtered boundary after a prior filter."""
         pvsyst.filter_time(start="1/1/90", end="6/30/90")
         last_ts = pvsyst.data_filtered.index[-1]
         pvsyst.filter_time(start="3/1/90")
-        assert pvsyst.data_filtered.index[0] == pd.Timestamp(year=1990, month=3, day=1, hour=0)
+        assert pvsyst.data_filtered.index[0] == pd.Timestamp(
+            year=1990, month=3, day=1, hour=0
+        )
         assert pvsyst.data_filtered.index[-1] == last_ts
 
     def test_test_date_no_days(self, pvsyst):
