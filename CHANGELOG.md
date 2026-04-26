@@ -47,6 +47,11 @@ multiple captest sections (e.g. `captest_e2848`, `captest_bifi`).
 - Documentation: new user-guide page `user_guide/captest` covering
 construction, setup, the canonical filter → `rep_cond` → `fit_regression` →
 `captest_results` workflow, overrides, and yaml round-trip.
+- `CapTest.rep_irr_filter_low` and `CapTest.rep_irr_filter_high` read-only
+properties derived from `CapTest.rep_irr_filter` as `1 - rep_irr_filter` and
+`1 + rep_irr_filter`. They update automatically whenever `rep_irr_filter` is
+reassigned. Pass them as the `low` / `high` arguments to `CapData.filter_irr`
+(with `ref_val='self_val'`) to filter around the reporting irradiance.
 
 ### Changed
 - `CapData.filter_time` now defaults ``end`` to the last timestamp of

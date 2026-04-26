@@ -201,6 +201,27 @@ held on :py:class:`~captest.captest.CapTest`
 
     cap_ratio = ct.captest_results()
 
+After computing reporting conditions, a second narrow irradiance filter around
+the reporting irradiance is common. The read-only properties
+:py:attr:`~captest.captest.CapTest.rep_irr_filter_low` and
+:py:attr:`~captest.captest.CapTest.rep_irr_filter_high` provide the fractional
+bounds derived from :py:attr:`~captest.captest.CapTest.rep_irr_filter`
+(``1 - rep_irr_filter`` and ``1 + rep_irr_filter`` respectively) for direct
+use with :py:meth:`~captest.capdata.CapData.filter_irr`:
+
+.. code-block:: Python
+
+    ct.meas.filter_irr(
+        ct.rep_irr_filter_low,
+        ct.rep_irr_filter_high,
+        ref_val='self_val',   # uses ct.meas.rc['poa']
+    )
+    ct.sim.filter_irr(
+        ct.rep_irr_filter_low,
+        ct.rep_irr_filter_high,
+        ref_val='self_val',   # uses ct.sim.rc['poa']
+    )
+
 :py:meth:`~captest.captest.CapTest.rep_cond` is a convenience method that
 calls :py:meth:`~captest.capdata.CapData.rep_cond` using the active preset's
 ``rep_conditions`` dict as default kwargs. Keyword overrides are partial-merged

@@ -403,6 +403,31 @@ class TestConstruction:
         meas_loader.assert_called_once_with("/fake/path")
         assert capt.meas is meas_cd_default
 
+    def test_rep_irr_filter_low_default(self):
+        """rep_irr_filter_low == 1 - rep_irr_filter with the default value."""
+        capt = CapTest()
+        assert capt.rep_irr_filter_low == pytest.approx(1 - capt.rep_irr_filter)
+        assert capt.rep_irr_filter_low == pytest.approx(0.8)
+
+    def test_rep_irr_filter_high_default(self):
+        """rep_irr_filter_high == 1 + rep_irr_filter with the default value."""
+        capt = CapTest()
+        assert capt.rep_irr_filter_high == pytest.approx(1 + capt.rep_irr_filter)
+        assert capt.rep_irr_filter_high == pytest.approx(1.2)
+
+    def test_rep_irr_filter_low_high_custom_at_construction(self):
+        """Low and high fractions reflect a non-default rep_irr_filter."""
+        capt = CapTest(rep_irr_filter=0.1)
+        assert capt.rep_irr_filter_low == pytest.approx(0.9)
+        assert capt.rep_irr_filter_high == pytest.approx(1.1)
+
+    def test_rep_irr_filter_low_high_update_on_reassignment(self):
+        """Reassigning rep_irr_filter updates the derived properties."""
+        capt = CapTest(rep_irr_filter=0.2)
+        capt.rep_irr_filter = 0.15
+        assert capt.rep_irr_filter_low == pytest.approx(0.85)
+        assert capt.rep_irr_filter_high == pytest.approx(1.15)
+
 
 class TestFromYaml:
     """Yaml-driven construction."""
