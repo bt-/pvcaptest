@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import TYPE_CHECKING
 import copy
 import json
 import re
@@ -9,9 +10,19 @@ import importlib
 
 import numpy as np
 import pandas as pd
+import param
 from bokeh.models import NumeralTickFormatter
 
+from captest import util
+from captest.calcparams import cell_temp
 from .util import tags_by_regex, read_json
+
+if TYPE_CHECKING:
+    # Imported only for static type hints / IDE support. Doing the import at
+    # runtime would create a cycle: capdata.py imports plotting at module
+    # top, so plotting cannot import CapData from a partially-initialized
+    # capdata module. See docs/specs/2026-04-26-scatter-plot-am-pm-tc-power-design.md.
+    from captest.capdata import CapData  # noqa: F401
 
 pn_spec = importlib.util.find_spec("panel")
 if pn_spec is not None:
@@ -30,8 +41,32 @@ hv_spec = importlib.util.find_spec("holoviews")
 if hv_spec is not None:
     import holoviews as hv
     from holoviews import opts
+    from holoviews.plotting.links import DataLink
 else:
     warnings.warn("The plotting methods will not work without the holoviews package.")
+
+# Stable column name written by ``calc_tc_power_column`` for plot-only
+# temperature-corrected power. Distinct from ``power_temp_correct`` (the
+# function-name column produced by ``CapData.process_regression_columns``
+# under the bifi_power_tc preset) to avoid colliding with that workflow.
+TC_POWER_PLOT_COL = "power_tc_plot"
+
+# Default calc-params expression used by ``ScatterPlot`` when ``tc_power``
+# is enabled and ``tc_power_calc`` is not provided. Tuned for measured DAS
+# data following the standard column-group inference
+# (``captest.columngroups.group_columns``); assumes a measured
+# back-of-module temperature group ``temp_bom`` is available. Sim users
+# must pass an explicit ``tc_power_calc``.
+DEFAULT_TC_POWER_CALC = {
+    "power": ("real_pwr_mtr", "sum"),
+    "cell_temp": (
+        cell_temp,
+        {
+            "poa": ("irr_poa", "mean"),
+            "bom": ("temp_bom", "mean"),
+        },
+    ),
+}
 
 COMBINE = {
     "poa_ghi": "irr.*(poa|ghi)$",
@@ -577,3 +612,552 @@ def get_resid_exog_frame(cd):
     )
     meas_resid_exog["source"] = cd.name
     return exog_names, meas_resid_exog
+
+
+_SPLIT_TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
+
+
+def _missing_column_groups(node, available_groups):
+    """Return the set of column-group ids referenced by ``node`` but absent
+    from ``available_groups``.
+
+    Walks the same calc-params nested-dict / aggregation-tuple /
+    calculation-tuple grammar as ``util.transform_calc_params`` and
+    collects only the leaves that look like column-group references --
+    aggregation tuples ``(group_id, agg_func)`` and bare strings. Bare
+    strings that match an existing column on ``cd.data`` are intentionally
+    NOT validated here; ``transform_calc_params`` accepts them.
+    """
+    missing = set()
+    if isinstance(node, dict):
+        for value in node.values():
+            missing.update(_missing_column_groups(value, available_groups))
+        return missing
+    if isinstance(node, tuple) and len(node) == 2:
+        first, second = node
+        if isinstance(first, str) and isinstance(second, str):
+            # Aggregation tuple: (group_id, agg_func).
+            if first not in available_groups:
+                missing.add(first)
+            return missing
+        if callable(first) and isinstance(second, dict):
+            # Calculation tuple: (func, kwargs).
+            missing.update(_missing_column_groups(second, available_groups))
+            return missing
+    return missing
+
+
+def add_am_pm_dim(df, split_time):
+    """
+    Tag rows of ``df`` as morning or afternoon based on a clock-time split.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame with a ``DatetimeIndex``.
+    split_time : str
+        Clock-time string in ``"HH:MM"`` format (24-hour, leading zeros
+        optional, e.g. ``"12:30"`` or ``"9:05"``). Rows whose index time is
+        strictly before ``split_time`` are tagged ``"am"``; rows at or after
+        ``split_time`` are tagged ``"pm"``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Copy of ``df`` with a new ``period`` column whose values are
+        ``"am"`` or ``"pm"``.
+
+    Raises
+    ------
+    ValueError
+        If ``split_time`` does not match ``"HH:MM"`` or specifies an
+        invalid hour/minute.
+    """
+    if not isinstance(split_time, str):
+        raise ValueError(f"split_time must be a 'HH:MM' string; got {split_time!r}.")
+    match = _SPLIT_TIME_RE.match(split_time)
+    if match is None:
+        raise ValueError(
+            f"split_time must match 'HH:MM' (e.g. '12:30'); got {split_time!r}."
+        )
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(f"split_time hour/minute out of range; got {split_time!r}.")
+    boundary_minutes = hour * 60 + minute
+    out = df.copy()
+    index_minutes = out.index.hour * 60 + out.index.minute
+    out["period"] = np.where(index_minutes < boundary_minutes, "am", "pm")
+    return out
+
+
+def calc_tc_power_column(
+    cd,
+    tc_power_calc,
+    col_name=TC_POWER_PLOT_COL,
+    verbose=False,
+    force_recompute=False,
+):
+    """
+    Materialize a temperature-corrected power column for plotting only.
+
+    Walks ``tc_power_calc`` (a calc-params nested dict using the same
+    grammar as ``TEST_SETUPS`` ``reg_cols_*`` values) via
+    ``captest.util.transform_calc_params`` and writes the resulting
+    ``power_temp_correct`` Series to ``cd.data[col_name]`` and
+    ``cd.data_filtered[col_name]``.
+
+    This helper is intentionally isolated from
+    ``CapData.process_regression_columns``: it does NOT touch
+    ``cd.regression_cols``, ``cd.regression_formula``, ``cd.summary``,
+    ``cd.kept``, or ``cd.removed``.
+
+    Parameters
+    ----------
+    cd : CapData
+        The CapData instance whose ``data`` and ``data_filtered`` will be
+        extended with ``col_name``. ``power_temp_coeff`` and ``base_temp``
+        attributes (propagated by ``CapTest.setup`` for shipped presets)
+        are auto-injected by ``CapData.custom_param`` if not present in
+        ``tc_power_calc``.
+    tc_power_calc : dict
+        Calc-params nested dict mirroring the bifi_power_tc preset's
+        ``reg_cols_meas['power']`` value. The outermost callable must
+        produce a Series of temperature-corrected power values; in
+        practice this is ``calcparams.power_temp_correct``.
+    col_name : str, default ``TC_POWER_PLOT_COL``
+        Name of the column written to ``cd.data`` / ``cd.data_filtered``.
+    verbose : bool, default False
+        Forwarded to ``transform_calc_params``.
+    force_recompute : bool, default False
+        When False (default), short-circuits and returns ``col_name`` if
+        the column already exists in ``cd.data``. Pass True to recompute.
+
+    Returns
+    -------
+    str
+        ``col_name``.
+
+    Raises
+    ------
+    KeyError
+        When ``tc_power_calc`` references a column-group id that is
+        missing from ``cd.column_groups``.
+    """
+    if (not force_recompute) and (col_name in cd.data.columns):
+        return col_name
+
+    # Pre-validate column-group references so a missing group surfaces as a
+    # clear KeyError instead of the AttributeError raised downstream by
+    # ``CapData.agg_group`` when ``cd.loc[group_id]`` returns ``None``.
+    missing_groups = sorted(
+        _missing_column_groups(tc_power_calc, set(cd.column_groups.keys()))
+    )
+    if missing_groups:
+        raise KeyError(
+            f"calc_tc_power_column could not resolve column group(s) "
+            f"{missing_groups}: not present in cd.column_groups. Pass an "
+            f"explicit `tc_power_calc` dict that matches this CapData's "
+            f"groups."
+        )
+
+    # Deep-copy the calc spec so transform_calc_params doesn't mutate the
+    # caller's dict in place. transform_calc_params operates by walking
+    # the structure and producing a transformed return value, so we never
+    # need to expose the mutated form to the caller.
+    spec = copy.deepcopy(tc_power_calc)
+
+    result = util.transform_calc_params(spec, cd, verbose=verbose)
+
+    # ``result`` is a dict with the same shape as the input, but with the
+    # calculation tuples replaced by the function names of the columns
+    # they wrote to. The outermost calculation's product (e.g.
+    # ``power_temp_correct``) is the column we want to expose under
+    # ``col_name``.
+    produced_col = None
+    if isinstance(result, dict):
+        # Pick the first entry whose value is a column-name string that now
+        # lives in cd.data. With the canonical tc_power_calc shape this is
+        # ``power`` -> ``"power_temp_correct"``.
+        for key, value in result.items():
+            if isinstance(value, str) and value in cd.data.columns:
+                produced_col = value
+                break
+    if produced_col is None:
+        raise KeyError(
+            "calc_tc_power_column could not identify the produced "
+            "temperature-corrected power column. Ensure tc_power_calc "
+            "includes a calculation tuple at the top level (e.g. "
+            "(power_temp_correct, {...}))."
+        )
+
+    cd.data[col_name] = cd.data[produced_col]
+    if cd.data_filtered is not None:
+        cd.data_filtered[col_name] = cd.data.loc[cd.data_filtered.index, produced_col]
+    return col_name
+
+
+# ---------------------------------------------------------------------
+# ScatterPlot: param.Parameterized class powering the shipped scatter
+# callables. Provides AM/PM split, temperature-corrected power view, and
+# (optional) linked-timeseries pairing on a single composable surface.
+# ---------------------------------------------------------------------
+
+
+_VIEW_DEPENDS = (
+    "split_day",
+    "split_time",
+    "am_color",
+    "pm_color",
+    "am_marker",
+    "pm_marker",
+    "tc_power",
+    "tc_mode",
+    "tc_power_calc",
+    "tc_force_recompute",
+    "timeseries",
+    "filtered",
+    "height",
+    "width",
+)
+
+
+class ScatterPlot(param.Parameterized):
+    """
+    Composable scatter plot for ``CapTest`` regression diagnostics.
+
+    Resolves x and y from ``cd.regression_formula`` (lhs vs first rhs) and
+    optionally:
+
+    - splits points into morning / afternoon glyphs (``split_day=True``),
+    - swaps the y-axis to a temperature-corrected power column
+      (``tc_power=True``, with mode ``replace`` / ``add_panel`` /
+      ``overlay``), and / or
+    - pairs the scatter with a linked timeseries panel
+      (``timeseries=True``).
+
+    The class is decorated with ``@param.depends`` on every view-affecting
+    parameter so it drops cleanly into a ``panel`` dashboard, but no
+    ``dashboard()`` method is shipped here; that surface will be designed
+    when dashboard work begins.
+
+    Parameters
+    ----------
+    cd : CapData or None
+        CapData instance whose ``data`` / ``column_groups`` /
+        ``regression_formula`` drive the plot. Required at view time.
+    filtered : bool, default True
+        When True (default), pulls regression columns from
+        ``cd.data_filtered``; when False, from ``cd.data``.
+    split_day : bool, default False
+        Render morning and afternoon points as two distinct overlaid
+        Scatters with different colors and markers.
+    split_time : str or None, default None
+        Clock-time override (``"HH:MM"``) for the AM/PM boundary. When
+        None and ``split_day=True``, the boundary is detected via
+        ``captest.util.detect_solar_noon`` (idxmax of clock-time-binned
+        ``ghi_mod_csky`` mean) with a 12:30 fallback.
+    am_color, pm_color : str, default ``"#1f77b4"`` / ``"#d62728"``
+        Glyph colors for the AM and PM Scatters when ``split_day=True``.
+    am_marker, pm_marker : str, default ``"circle"`` / ``"triangle"``
+        Glyph markers for the AM and PM Scatters when ``split_day=True``.
+    tc_power : bool, default False
+        Plot against temperature-corrected power instead of (or in
+        addition to) raw power.
+    tc_mode : {"replace", "add_panel", "overlay"}, default "replace"
+        Layout strategy when ``tc_power=True``.
+    tc_power_calc : dict or None, default None
+        Calc-params nested dict that produces the tc-power column. When
+        None, ``DEFAULT_TC_POWER_CALC`` is used (tuned for measured DAS
+        data; sim users must override).
+    tc_force_recompute : bool, default False
+        When True, recomputes the tc-power column even if it already
+        exists on ``cd.data``.
+    timeseries : bool, default False
+        Pair the principal scatter with a linked timeseries panel below.
+        Only valid for the single-panel ``tc_mode`` values
+        (``replace`` and ``overlay``); raises ``ValueError`` if combined
+        with ``tc_mode='add_panel'``.
+    height, width : int, default 400 / 500
+        Pixel dimensions forwarded to the Scatter / Curve options.
+    """
+
+    cd = param.Parameter(
+        default=None,
+        precedence=-1,
+        doc="CapData instance whose data + column groups drive the plot.",
+    )
+    filtered = param.Boolean(default=True)
+
+    # AM/PM split
+    split_day = param.Boolean(default=False)
+    split_time = param.String(default=None, allow_None=True)
+    am_color = param.Color(default="#1f77b4")
+    pm_color = param.Color(default="#d62728")
+    am_marker = param.Selector(
+        objects=["circle", "triangle", "square", "x", "diamond"],
+        default="circle",
+    )
+    pm_marker = param.Selector(
+        objects=["circle", "triangle", "square", "x", "diamond"],
+        default="triangle",
+    )
+
+    # Temperature-corrected power
+    tc_power = param.Boolean(default=False)
+    tc_mode = param.Selector(
+        objects=["replace", "add_panel", "overlay"], default="replace"
+    )
+    tc_power_calc = param.Dict(default=None, allow_None=True)
+    tc_force_recompute = param.Boolean(default=False)
+
+    # Timeseries pairing
+    timeseries = param.Boolean(default=False)
+
+    # Sizing
+    height = param.Integer(default=400)
+    width = param.Integer(default=500)
+
+    def _require_holoviews(self):
+        if hv_spec is None:
+            raise ImportError(
+                "holoviews is required for ScatterPlot.view. Install with "
+                "`uv add holoviews` or equivalent."
+            )
+
+    def _require_cd(self):
+        if self.cd is None:
+            raise ValueError("ScatterPlot.cd must be set before calling view().")
+
+    def _resolve_xy(self):
+        """Return (lhs_list, rhs_list, df) from the bound CapData.
+
+        ``df`` is ``cd.get_reg_cols(filtered_data=self.filtered)`` with
+        its DatetimeIndex preserved (the index reset is performed later
+        in :meth:`view`, after tc-power columns are joined and AM/PM
+        tagging is applied).
+        """
+        lhs, rhs = util.parse_regression_formula(self.cd.regression_formula)
+        df = self.cd.get_reg_cols(filtered_data=self.filtered).copy()
+        return lhs, rhs, df
+
+    def _ensure_tc_power(self, df, lhs):
+        """Resolve and join the tc-power column onto ``df``.
+
+        Returns ``(df, tc_col_name, tc_active)``. ``tc_active`` is False
+        when the regression already targets a tc-power column; in that
+        case ``view()`` falls back to ``tc_mode='replace'`` semantics
+        without writing a redundant column.
+        """
+        regression_already_tc = (
+            self.cd.regression_cols.get("power") == "power_temp_correct"
+        )
+        if regression_already_tc:
+            warnings.warn(
+                "Regression formula already targets temperature-corrected "
+                "power; ignoring tc_power=True.",
+                stacklevel=3,
+            )
+            return df, lhs[0], False
+
+        spec = (
+            self.tc_power_calc
+            if self.tc_power_calc is not None
+            else DEFAULT_TC_POWER_CALC
+        )
+        tc_col = calc_tc_power_column(
+            self.cd,
+            spec,
+            col_name=TC_POWER_PLOT_COL,
+            verbose=False,
+            force_recompute=self.tc_force_recompute,
+        )
+        source = self.cd.data_filtered if self.filtered else self.cd.data
+        df[tc_col] = source.loc[df.index, tc_col]
+        return df, tc_col, True
+
+    def _build_scatter(self, df, x_col, y_col, label=None):
+        """Return a single ``hv.Scatter`` (no AM/PM split)."""
+        scatter_kwargs = dict(
+            size=5,
+            tools=["hover", "lasso_select", "box_select"],
+            legend_position="right",
+            height=self.height,
+            width=self.width,
+            yformatter=NumeralTickFormatter(format="0,0"),
+        )
+        if label is None:
+            return hv.Scatter(df, x_col, [y_col, "index"]).opts(**scatter_kwargs)
+        return hv.Scatter(df, x_col, [y_col, "index"], label=label).opts(
+            **scatter_kwargs
+        )
+
+    def _build_split_overlay(self, df, x_col, y_col):
+        """Return ``hv.Overlay`` of AM and PM Scatters with distinct styles."""
+        am_df = df[df["period"] == "am"]
+        pm_df = df[df["period"] == "pm"]
+        common = dict(
+            size=5,
+            tools=["hover", "lasso_select", "box_select"],
+            legend_position="right",
+            height=self.height,
+            width=self.width,
+            yformatter=NumeralTickFormatter(format="0,0"),
+        )
+        am = hv.Scatter(am_df, x_col, [y_col, "index"], label="am").opts(
+            color=self.am_color, marker=self.am_marker, **common
+        )
+        pm = hv.Scatter(pm_df, x_col, [y_col, "index"], label="pm").opts(
+            color=self.pm_color, marker=self.pm_marker, **common
+        )
+        return am * pm
+
+    def _principal(self, df, x_col, y_col):
+        """Build the principal scatter (single Scatter or AM/PM Overlay)."""
+        if self.split_day:
+            return self._build_split_overlay(df, x_col, y_col)
+        return self._build_scatter(df, x_col, y_col)
+
+    def _attach_timeseries(self, principal, df, x_col, y_col):
+        """Append a linked timeseries panel below ``principal``."""
+        timeseries = hv.Scatter(df, "index", [y_col, x_col]).opts(
+            tools=["hover", "lasso_select", "box_select"],
+            height=self.height,
+            width=self.width * 2,
+            yformatter=NumeralTickFormatter(format="0,0"),
+            selection_fill_color="red",
+            selection_line_color="red",
+        )
+        DataLink(principal, timeseries)
+        return (principal + timeseries).cols(1)
+
+    @param.depends(*_VIEW_DEPENDS)
+    def view(self):
+        """
+        Build and return the ``hv.Layout`` for the configured options.
+
+        Returns
+        -------
+        holoviews.Layout
+            A Layout whose first element is the principal scatter (a
+            ``Scatter`` for the single-glyph case, an ``Overlay`` when
+            ``split_day=True``). Additional panels appear when
+            ``tc_mode='add_panel'`` or ``timeseries=True``.
+
+        Raises
+        ------
+        ValueError
+            If ``cd`` is unset, or if ``timeseries=True`` is combined with
+            ``tc_mode='add_panel'``.
+        ImportError
+            If ``holoviews`` is not installed.
+        """
+        self._require_holoviews()
+        self._require_cd()
+
+        if self.timeseries and self.tc_mode == "add_panel":
+            raise ValueError(
+                "ScatterPlot does not support timeseries=True with "
+                "tc_mode='add_panel'; pick 'replace' or 'overlay'."
+            )
+
+        lhs, rhs, df = self._resolve_xy()
+        y_col = lhs[0]
+        x_col = rhs[0]
+
+        tc_active = False
+        tc_col = None
+        if self.tc_power:
+            df, tc_col, tc_active = self._ensure_tc_power(df, lhs)
+
+        if self.split_day:
+            split_time = self.split_time or util.detect_solar_noon(self.cd.data)
+            df = add_am_pm_dim(df, split_time)
+
+        df = df.reset_index()
+        df = df.rename(columns={df.columns[0]: "index"})
+
+        raw_principal = self._principal(df, x_col, y_col)
+        if tc_active:
+            tc_principal = self._principal(df, x_col, tc_col)
+        else:
+            tc_principal = None
+
+        if not tc_active or self.tc_mode == "replace":
+            principal = tc_principal if tc_active else raw_principal
+            layout = hv.Layout([principal])
+            principal_for_link = principal
+            principal_y = tc_col if tc_active else y_col
+        elif self.tc_mode == "add_panel":
+            layout = hv.Layout([raw_principal, tc_principal])
+            principal_for_link = raw_principal
+            principal_y = y_col
+        else:  # overlay
+            principal = raw_principal * tc_principal
+            layout = hv.Layout([principal])
+            principal_for_link = principal
+            principal_y = y_col
+
+        if self.timeseries:
+            return self._attach_timeseries(principal_for_link, df, x_col, principal_y)
+
+        return layout
+
+
+class ScatterBifiPowerTc(ScatterPlot):
+    """
+    Two-panel scatter for the ``bifi_power_tc`` preset.
+
+    The ``bifi_power_tc`` regression formula is ``power ~ poa + rpoa``
+    where ``power`` is already temperature-corrected. This subclass
+    builds one panel per rhs variable (``power vs poa`` and
+    ``power vs rpoa``). The ``tc_power`` parameter is ignored here
+    because the regression power is already tc-corrected; setting it to
+    True emits a ``UserWarning``.
+
+    AM/PM splitting and timeseries pairing are inherited from
+    :class:`ScatterPlot`. When ``timeseries=True``, only the first panel
+    is paired with a linked timeseries view to keep the layout sane.
+    """
+
+    @param.depends(*_VIEW_DEPENDS)
+    def view(self):
+        """
+        Build a two-panel ``hv.Layout`` for the bifi_power_tc preset.
+
+        Returns
+        -------
+        holoviews.Layout
+        """
+        self._require_holoviews()
+        self._require_cd()
+
+        if self.tc_power:
+            warnings.warn(
+                "ScatterBifiPowerTc ignores tc_power=True; the regression "
+                "power column is already temperature-corrected.",
+                stacklevel=2,
+            )
+
+        lhs, rhs, df = self._resolve_xy()
+        y_col = lhs[0]
+
+        if self.split_day:
+            split_time = self.split_time or util.detect_solar_noon(self.cd.data)
+            df = add_am_pm_dim(df, split_time)
+
+        df = df.reset_index()
+        df = df.rename(columns={df.columns[0]: "index"})
+
+        panels = [self._principal(df, x_col, y_col) for x_col in rhs]
+
+        if self.timeseries:
+            first_panel = panels[0]
+            paired = self._attach_timeseries(first_panel, df, rhs[0], y_col)
+            # ``paired`` is a Layout; combine with the remaining panels.
+            remaining = panels[1:]
+            if remaining:
+                return hv.Layout([paired, *remaining])
+            return paired
+
+        return hv.Layout(panels)

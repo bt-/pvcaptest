@@ -146,6 +146,66 @@ def tags_by_regex(tag_list, regex_str):
     return [tag for tag in tag_list if regex.search(tag) is not None]
 
 
+def detect_solar_noon(data, ghi_col="ghi_mod_csky", default="12:30"):
+    """
+    Estimate a single representative solar-noon clock time from clear-sky GHI.
+
+    Groups ``data[ghi_col]`` by the clock time of each timestamp (hour and
+    minute, ignoring date), takes the mean of each clock-time bucket, and
+    returns the bucket with the largest mean formatted as ``"HH:MM"``.
+
+    Used by plotting helpers that split observations into morning and
+    afternoon at solar noon.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        DataFrame with a ``DatetimeIndex``. Must contain ``ghi_col`` for the
+        idxmax-based detection to apply.
+    ghi_col : str, default ``"ghi_mod_csky"``
+        Column to use as the clear-sky GHI signal. ``ghi_mod_csky`` is the
+        column added to ``CapData.data`` by ``captest.io.load_data`` when a
+        ``site`` dictionary is provided.
+    default : str, default ``"12:30"``
+        Fallback clock-time string returned when ``ghi_col`` is absent from
+        ``data`` or when ``data`` is empty.
+
+    Returns
+    -------
+    str
+        Clock time formatted as ``"HH:MM"``.
+
+    Warns
+    -----
+    UserWarning
+        Emitted when ``ghi_col`` is missing from ``data.columns`` or the
+        index is empty; the ``default`` is then returned.
+    """
+    if ghi_col not in data.columns:
+        warnings.warn(
+            f"Column {ghi_col!r} not found in data; "
+            f"falling back to split_time={default!r}.",
+            stacklevel=2,
+        )
+        return default
+    if data.shape[0] == 0:
+        warnings.warn(
+            f"data has no rows; falling back to split_time={default!r}.",
+            stacklevel=2,
+        )
+        return default
+    grouped = data[ghi_col].groupby([data.index.hour, data.index.minute]).mean()
+    if grouped.dropna().empty:
+        warnings.warn(
+            f"All values in {ghi_col!r} are NaN; "
+            f"falling back to split_time={default!r}.",
+            stacklevel=2,
+        )
+        return default
+    hour, minute = grouped.idxmax()
+    return f"{int(hour):02d}:{int(minute):02d}"
+
+
 def append_tags(sel_tags, tags, regex_str):
     new_list = sel_tags.copy()
     new_list.extend(tags_by_regex(tags, regex_str))

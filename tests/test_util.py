@@ -339,3 +339,58 @@ class TestParseRegressionFormula:
         )
         assert lhs == ["power"]
         assert rhs == ["poa", "rpoa", "t_amb", "w_vel"]
+
+
+class TestDetectSolarNoon:
+    """Tests for util.detect_solar_noon."""
+
+    def _solar_like_index(self, days=3, freq="15min"):
+        return pd.date_range("2024-06-01 00:00", periods=24 * 4 * days, freq=freq)
+
+    def _peak_at(self, idx, peak_hour, peak_minute):
+        """Build a clear-sky-ish series whose per-clock-time mean peaks at
+        ``peak_hour:peak_minute`` regardless of date."""
+        minutes_of_day = idx.hour * 60 + idx.minute
+        peak_minutes = peak_hour * 60 + peak_minute
+        # Cosine bell centered on peak_minutes (period = 1 day).
+        deltas = (minutes_of_day - peak_minutes) / (24 * 60)
+        values = np.maximum(np.cos(2 * np.pi * deltas), 0) ** 2
+        return values
+
+    def test_returns_clock_time_of_idxmax(self):
+        idx = self._solar_like_index()
+        ghi = self._peak_at(idx, 13, 0)
+        df = pd.DataFrame({"ghi_mod_csky": ghi}, index=idx)
+        assert util.detect_solar_noon(df) == "13:00"
+
+    def test_zero_padded_hour_and_minute(self):
+        # 1-minute frequency so the 09:05 peak aligns with an actual sample.
+        idx = pd.date_range("2024-06-01 00:00", periods=24 * 60 * 2, freq="1min")
+        ghi = self._peak_at(idx, 9, 5)
+        df = pd.DataFrame({"ghi_mod_csky": ghi}, index=idx)
+        assert util.detect_solar_noon(df) == "09:05"
+
+    def test_missing_column_warns_and_uses_default(self):
+        idx = self._solar_like_index()
+        df = pd.DataFrame({"other": np.zeros(len(idx))}, index=idx)
+        with pytest.warns(UserWarning, match="ghi_mod_csky"):
+            result = util.detect_solar_noon(df)
+        assert result == "12:30"
+
+    def test_empty_index_warns_and_uses_default(self):
+        df = pd.DataFrame({"ghi_mod_csky": []}, index=pd.DatetimeIndex([]))
+        with pytest.warns(UserWarning, match="no rows"):
+            result = util.detect_solar_noon(df)
+        assert result == "12:30"
+
+    def test_custom_default_returned(self):
+        df = pd.DataFrame({"other": [1.0]}, index=pd.DatetimeIndex(["2024-01-01"]))
+        with pytest.warns(UserWarning):
+            result = util.detect_solar_noon(df, default="11:45")
+        assert result == "11:45"
+
+    def test_custom_ghi_col(self):
+        idx = self._solar_like_index()
+        ghi = self._peak_at(idx, 12, 30)
+        df = pd.DataFrame({"clear_sky": ghi}, index=idx)
+        assert util.detect_solar_noon(df, ghi_col="clear_sky") == "12:30"

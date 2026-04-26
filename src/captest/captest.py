@@ -29,6 +29,7 @@ import yaml
 
 from captest import util
 from captest.capdata import CapData
+from captest.plotting import ScatterBifiPowerTc, ScatterPlot
 from captest.calcparams import (
     absolute_airmass,
     apparent_zenith,
@@ -127,80 +128,54 @@ def perc_wrap(p):
 # --- TEST_SETUPS registry -------------------------------------------------
 
 
-def _scatter_formula_xy(cd, x_key=None):
-    """Resolve (x_col, y_col, df) for a formula-agnostic scatter.
-
-    The y variable is the lhs of ``cd.regression_formula``; the x variable is
-    the first rhs by default or ``x_key`` if given. ``df`` is the filtered
-    regression-columns DataFrame with columns renamed to the formula-variable
-    names.
-    """
-    lhs, rhs = util.parse_regression_formula(cd.regression_formula)
-    y_col = lhs[0]
-    x_col = x_key if x_key is not None else rhs[0]
-    reg_vars = list({y_col, *rhs})
-    df = cd.get_reg_cols(reg_vars=reg_vars)
-    return x_col, y_col, df
-
-
 def scatter_default(cd, **kwargs):
     """Formula-agnostic scatter of regression lhs vs. first rhs variable.
+
+    Thin wrapper around
+    :class:`captest.plotting.ScatterPlot`. Forwards every keyword argument
+    through to the class constructor, so callers can opt into the
+    AM/PM split, temperature-corrected power, and timeseries-pairing
+    features without changing call sites.
 
     Parameters
     ----------
     cd : CapData
-        Must have ``regression_formula`` set and ``regression_cols`` resolved
-        (e.g. via ``CapTest.setup()`` or ``cd.process_regression_columns()``).
+        Must have ``regression_formula`` set and ``regression_cols``
+        resolved (e.g. via ``CapTest.setup()`` or
+        ``cd.process_regression_columns()``).
     **kwargs
-        Forwarded to ``hv.Scatter.opts``.
+        Forwarded to :class:`ScatterPlot`. See its docstring for the full
+        parameter surface.
 
     Returns
     -------
     hv.Layout
-        A single-panel Layout wrapping the scatter plot. Layout (not Scatter)
-        is returned for a uniform return type across the shipped callables.
+        A single-panel Layout wrapping the scatter plot.
     """
-    if hv is None:
-        raise ImportError(
-            "holoviews is required for scatter_default. Install with "
-            "`uv add holoviews` or equivalent."
-        )
-    x_col, y_col, df = _scatter_formula_xy(cd)
-    df = df.reset_index().rename(columns={df.index.name or "index": "index"})
-    scatter = hv.Scatter(df, x_col, [y_col, "index"]).opts(size=5, **kwargs)
-    return hv.Layout([scatter])
+    return ScatterPlot(cd=cd, **kwargs).view()
 
 
 def scatter_etotal(cd, **kwargs):
     """Single scatter of regression lhs vs. the ``e_total`` column.
 
-    Intended for the ``bifi_e2848_etotal`` preset. Resolves the x column from
-    ``cd.regression_cols['poa']`` after ``process_regression_columns`` has
-    materialized the calculated e_total column.
+    Intended for the ``bifi_e2848_etotal`` preset. Thin wrapper around
+    :class:`captest.plotting.ScatterPlot`; resolves the x column from
+    ``cd.regression_cols['poa']`` after ``process_regression_columns``
+    has materialized the calculated e_total column.
     """
-    if hv is None:
-        raise ImportError("holoviews is required for scatter_etotal.")
-    return scatter_default(cd, **kwargs)
+    return ScatterPlot(cd=cd, **kwargs).view()
 
 
 def scatter_bifi_power_tc(cd, **kwargs):
     """Two-panel layout: lhs vs. ``poa`` and lhs vs. ``rpoa``.
 
     Intended for the ``bifi_power_tc`` preset whose regression formula is
-    ``power ~ poa + rpoa`` (with ``power`` resolved to the temperature-
-    corrected calculated column). Each rhs variable gets its own panel.
+    ``power ~ poa + rpoa`` (with ``power`` resolved to the
+    temperature-corrected calculated column). Thin wrapper around
+    :class:`captest.plotting.ScatterBifiPowerTc`; each rhs variable gets
+    its own panel.
     """
-    if hv is None:
-        raise ImportError("holoviews is required for scatter_bifi_power_tc.")
-    lhs, rhs = util.parse_regression_formula(cd.regression_formula)
-    y_col = lhs[0]
-    reg_vars = list({y_col, *rhs})
-    df = cd.get_reg_cols(reg_vars=reg_vars).reset_index()
-    df = df.rename(columns={df.columns[0]: "index"})
-    panels = [
-        hv.Scatter(df, x_col, [y_col, "index"]).opts(size=5, **kwargs) for x_col in rhs
-    ]
-    return hv.Layout(panels)
+    return ScatterBifiPowerTc(cd=cd, **kwargs).view()
 
 
 TEST_SETUPS = {
