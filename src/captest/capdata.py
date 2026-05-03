@@ -2904,6 +2904,7 @@ class CapData(object):
         except TypeError:
             print("No filters have been run.")
 
+    @update_summary
     def rep_cond(
         self,
         irr_bal=False,
