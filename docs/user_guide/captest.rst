@@ -7,8 +7,7 @@ capacity test against a pair of measured and modeled :py:class:`~captest.capdata
 instances. It binds both instances together, holds every test-level setting
 (regression formula, reporting-irradiance recipe, irradiance / shade filter
 bounds, nameplate, tolerance, and calc-params scalars like bifaciality), and
-drives a single source of truth from a yaml config file so the same test can be
-reproduced from a notebook, GUI, or command-line workflow.
+allows using a yaml config file to define capacity test parameters.
 
 :py:class:`~captest.captest.CapTest` is a config + state container, not a
 runner. After ``setup()``, users still call ``ct.meas.filter_*(...)``,
