@@ -2,84 +2,113 @@
 
 CapTest
 =======
-:py:class:`~captest.captest.CapTest` is the unified entry point for running a
-capacity test against a pair of measured and modeled :py:class:`~captest.capdata.CapData`
-instances. It binds both instances together, holds every test-level setting
-(regression formula, reporting-irradiance recipe, irradiance / shade filter
-bounds, nameplate, tolerance, and calc-params scalars like bifaciality), and
-allows using a yaml config file to define capacity test parameters.
+:py:class:`~captest.captest.CapTest` is a convenient way to keep the measured
+data, modeled data, test settings, and comparison plots together for one
+capacity test. It is useful when you want one object to represent the test you
+are working on, rather than separately passing the measured and modeled
+:py:class:`~captest.capdata.CapData` objects into each comparison function.
 
-:py:class:`~captest.captest.CapTest` is a config + state container, not a
-runner. After ``setup()``, users still call ``ct.meas.filter_*(...)``,
-``ct.meas.fit_regression()``, and the other :py:class:`~captest.capdata.CapData`
-methods directly; see :ref:`dataload` for that workflow. The two things
-:py:class:`~captest.captest.CapTest` takes over are **regression-preset
-resolution** (via :py:data:`~captest.captest.TEST_SETUPS`) and all
-**cross-``CapData``** comparison and plotting methods that previously lived at
-module level.
+The workflow is still the same workflow described in :ref:`dataload`: load the
+data, review the column groups, filter the measured and modeled data, calculate
+reporting conditions, fit regressions, and compare the results. ``CapTest``
+helps with the pieces that are repeated from project to project:
 
-Regression presets (``TEST_SETUPS``)
-------------------------------------
-:py:data:`~captest.captest.TEST_SETUPS` is a module-level registry of named
-regression-equation presets. Each entry packages together the measured-side
-regression columns, the modeled-side regression columns, the regression formula,
-the scatter-plot callable that matches the formula, and the default reporting-
-conditions kwargs. Three presets ship with pvcaptest:
+- Keeping the measured and modeled datasets together as ``ct.meas`` and
+  ``ct.sim``.
+- Applying a named regression setup, such as the standard ASTM E2848 equation
+  or one of the bifacial options.
+- Storing common test values, such as nameplate capacity, test tolerance,
+  irradiance filter limits, shade-filter settings, and bifaciality.
+- Creating comparison plots and pass/fail summaries from the same test object.
+- Reading and writing the test setup from a yaml file, which can be helpful
+  when you want a repeatable project record.
 
-- ``e2848_default`` — the default ASTM E2848 regression
-  ``power ~ poa + I(poa*poa) + I(poa*t_amb) + I(poa*w_vel) - 1``. Uses
-  :py:func:`~captest.captest.scatter_default` for plots.
-- ``bifi_e2848_etotal`` — the same ASTM formula but the ``poa`` term is the
-  calculated ``e_total`` column (front POA plus rear POA times bifaciality).
-  Uses :py:func:`~captest.captest.scatter_etotal`. Requires the
-  :py:attr:`~captest.captest.CapTest.bifaciality` attribute to be set before
-  ``setup()``.
-- ``bifi_power_tc`` — a temperature-corrected bifacial regression
-  ``power ~ poa + rpoa``, where ``power`` is the calculated
-  ``power_temp_correct`` column. Uses
-  :py:func:`~captest.captest.scatter_bifi_power_tc`, which returns a
-  two-panel layout (one panel per right-hand-side term).
-- ``e2848_spec_corrected_poa`` — the default ASTM formula, but the ``poa``
-  term is a First Solar spectral-correction-adjusted POA
-  (``poa_spec_corrected = poa * spectral_factor_firstsolar``). The meas-side
-  tree computes precipitable water from measured humidity and ambient
-  temperature; the sim-side tree reads PVsyst ``PrecWat`` and converts it from
-  meters to centimeters via :py:func:`~captest.calcparams.scale`, and computes
-  the apparent zenith using
-  :py:func:`~captest.calcparams.apparent_zenith_pvsyst`, which handles
-  PVsyst's half-hour timestamp shift internally. Requires ``humidity`` and
-  ``pressure`` column groups on the measured :py:class:`~captest.capdata.CapData`,
-  a ``PrecWat`` column on the modeled :py:class:`~captest.capdata.CapData`,
-  and ``cd.site`` on the measured instance (see :ref:`spec_corrected_poa`).
+For users coming from spreadsheet-based calculations, a ``CapTest`` object is
+similar to a workbook that keeps the key tabs and assumptions for one test in a
+single place. The raw measured data and PVsyst data remain in the associated
+``CapData`` objects, while the test-level assumptions are stored on ``CapTest``.
+
+When to use CapTest
+-------------------
+The examples in :ref:`dataload` use :py:class:`~captest.capdata.CapData`
+directly. That is still a good approach, especially while learning pvcaptest or
+while working through a non-standard analysis.
+
+``CapTest`` becomes more helpful when:
+
+- You have both measured and modeled data for the same test.
+- You want to use one of the standard regression setups without manually
+  assigning all regression columns.
+- You want one place to store project-level assumptions such as AC nameplate,
+  tolerance, bifaciality, and filter settings.
+- You plan to save the test setup in a yaml file and re-run it later.
+- You want comparison methods such as
+  :py:meth:`~captest.captest.CapTest.captest_results`,
+  :py:meth:`~captest.captest.CapTest.overlay_scatters`, and
+  :py:meth:`~captest.captest.CapTest.residual_plot` to use the same measured
+  and modeled data automatically.
+
+Choosing a test setup
+---------------------
+The ``test_setup`` value tells pvcaptest which regression equation and default
+measured/model column mappings to use. These setups are intended to cover common
+capacity-test cases without requiring users to write a regression formula from
+scratch.
+
+The built-in options are:
+
+``e2848_default``
+    Standard ASTM E2848 regression:
+
+    .. math::
+        P = E_{POA}\left(a_{1} + a_{2} E_{POA} + a_{3} T_{a} + a_{4} v\right)
+
+    This is the default setup for monofacial capacity tests.
+
+``bifi_e2848_etotal``
+    Uses the standard ASTM E2848 regression form, but replaces front-side POA
+    with total irradiance:
+
+    .. math::
+        E_{Total} = E_{POA} + E_{Rear} \varphi
+
+    where :math:`\varphi` is the bifaciality factor. This is useful for the
+    NREL modified bifacial approach described in :ref:`bifacial`.
+
+``bifi_power_tc``
+    Uses temperature-corrected power as the dependent variable and regresses it
+    against front and rear irradiance. This setup creates a two-panel scatter
+    plot so the front- and rear-side relationships can be reviewed separately.
+
+``e2848_spec_corrected_poa``
+    Uses the standard ASTM E2848 regression form, but applies a First Solar
+    spectral correction to POA irradiance before fitting the regression. This
+    setup requires humidity and pressure data on the measured side and
+    precipitable water from the PVsyst output. See :ref:`spec_corrected_poa`
+    for the additional inputs.
 
 .. note::
 
-    The lhs key of the regression formula is always ``"power"`` across
-    shipped presets, even when the formula regresses a derived quantity like
-    temperature-corrected power. Code that hardcodes ``"power"`` as the lhs
-    key keeps working with all shipped presets.
+    The built-in setup names are strings. For example,
+    ``test_setup='e2848_default'`` uses the standard ASTM E2848 setup, and
+    ``test_setup='bifi_e2848_etotal'`` uses the total-irradiance bifacial setup.
 
-Additional presets can be registered by assigning into
-:py:data:`~captest.captest.TEST_SETUPS` at import time. Each entry is validated
-against :py:func:`~captest.captest.validate_test_setup` when
-:py:meth:`~captest.captest.CapTest.setup` resolves the preset.
+Creating a CapTest
+------------------
+A :py:class:`~captest.captest.CapTest` can be created from data that has already
+been loaded, from file paths, or from a yaml file.
 
-Construction
-------------
-A :py:class:`~captest.captest.CapTest` can be constructed three ways.
-
-From pre-built CapData instances
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-:py:meth:`~captest.captest.CapTest.from_params` is the most direct constructor.
-When both ``meas`` and ``sim`` are supplied it calls
-:py:meth:`~captest.captest.CapTest.setup` automatically:
+From loaded data
+~~~~~~~~~~~~~~~~
+If you have already loaded the measured and modeled data, pass the two
+``CapData`` objects to :py:meth:`~captest.captest.CapTest.from_params`.
 
 .. code-block:: Python
 
     from captest import CapTest, load_data, load_pvsyst
 
     meas = load_data(path='./data/measured/')
-    sim  = load_pvsyst(path='./data/pvsyst_results.csv')
+    sim = load_pvsyst(path='./data/pvsyst_results.csv')
 
     ct = CapTest.from_params(
         test_setup='e2848_default',
@@ -89,14 +118,15 @@ When both ``meas`` and ``sim`` are supplied it calls
         test_tolerance='- 4',
     )
 
+The measured data is then available as ``ct.meas`` and the modeled data is
+available as ``ct.sim``. Both are regular ``CapData`` objects, so the filtering,
+plotting, reporting-condition, and regression methods used elsewhere in the
+User Guide still apply.
+
 From data paths
 ~~~~~~~~~~~~~~~
-If ``meas`` / ``sim`` are not pre-built,
-:py:meth:`~captest.captest.CapTest.from_params` accepts ``meas_path`` /
-``sim_path`` and calls :py:func:`~captest.io.load_data` /
-:py:func:`~captest.io.load_pvsyst` internally. A custom loader can be injected
-by passing ``meas_loader`` / ``sim_loader`` (and any extra kwargs via
-``meas_load_kwargs`` / ``sim_load_kwargs``):
+``CapTest`` can also load the data for you. This is useful when you want the
+same object to store the data paths and the test settings.
 
 .. code-block:: Python
 
@@ -106,22 +136,24 @@ by passing ``meas_loader`` / ``sim_loader`` (and any extra kwargs via
         sim_path='./data/pvsyst_results.csv',
         bifaciality=0.15,
         ac_nameplate=6_000_000,
+        test_tolerance='- 4',
     )
+
+Measured data is loaded with :py:func:`~captest.io.load_data`, and modeled data
+is loaded with :py:func:`~captest.io.load_pvsyst`. Extra loading options can be
+passed with ``meas_load_kwargs`` and ``sim_load_kwargs``.
 
 From yaml
 ~~~~~~~~~
-:py:meth:`~captest.captest.CapTest.from_yaml` reads the sub-mapping at a
-top-level ``key`` (default ``"captest"``) of a yaml file; relative
-``meas_path`` and ``sim_path`` values are resolved against the yaml file's
-directory.
+For repeatable project work, the capacity-test setup can be stored in a yaml
+file and loaded with :py:meth:`~captest.captest.CapTest.from_yaml`.
 
 .. code-block:: yaml
 
-    # project.yaml
     captest:
       test_setup: bifi_e2848_etotal
-      meas_path: ./data/meas/
-      sim_path:  ./data/pvsyst.csv
+      meas_path: ./data/measured/
+      sim_path: ./data/pvsyst.csv
       ac_nameplate: 6_000_000
       test_tolerance: "- 4"
       min_irr: 400
@@ -133,57 +165,70 @@ directory.
 
     ct = CapTest.from_yaml('./project.yaml')
 
-The yaml ``key`` argument lets one file hold multiple captest sections — for
-example ``captest_e2848`` and ``captest_bifi`` — so the same project yaml can
-drive multiple flavors of the capacity test against the same data:
+Relative ``meas_path`` and ``sim_path`` values are interpreted relative to the
+yaml file location. This makes the yaml file portable with the project folder.
+
+One yaml file can also contain more than one capacity-test setup. For example,
+the same bifacial project may be reviewed with both the total-irradiance E2848
+setup and the temperature-corrected power setup.
+
+.. code-block:: yaml
+
+    captest_bifi_etotal:
+      test_setup: bifi_e2848_etotal
+      meas_path: ./data/measured/
+      sim_path: ./data/pvsyst.csv
+      ac_nameplate: 6_000_000
+      bifaciality: 0.15
+
+    captest_bifi_power_tc:
+      test_setup: bifi_power_tc
+      meas_path: ./data/measured/
+      sim_path: ./data/pvsyst.csv
+      ac_nameplate: 6_000_000
+      bifaciality: 0.15
 
 .. code-block:: Python
 
-    ct_default = CapTest.from_yaml('./project.yaml', key='captest_e2848')
-    ct_bifi    = CapTest.from_yaml('./project.yaml', key='captest_bifi')
+    ct_etotal = CapTest.from_yaml('./project.yaml', key='captest_bifi_etotal')
+    ct_power_tc = CapTest.from_yaml('./project.yaml', key='captest_bifi_power_tc')
 
-Bare + manual setup
-~~~~~~~~~~~~~~~~~~~
-If you want to assemble the instance yourself, construct
-:py:class:`~captest.captest.CapTest` with just the preset and scalars, assign
-``meas`` / ``sim`` directly, and call
-:py:meth:`~captest.captest.CapTest.setup` when ready:
+What setup does
+---------------
+When ``CapTest`` has both measured and modeled data, it prepares each
+``CapData`` object for the selected test setup. This happens automatically when
+using :py:meth:`~captest.captest.CapTest.from_params` or
+:py:meth:`~captest.captest.CapTest.from_yaml` with both datasets present.
 
-.. code-block:: Python
+The setup step:
 
-    ct = CapTest(test_setup='bifi_power_tc', bifaciality=0.15)
-    ct.meas = my_meas
-    ct.sim  = my_sim
-    ct.setup()
+- Assigns the regression equation for the selected ``test_setup``.
+- Assigns the measured and modeled columns used by that equation.
+- Aggregates sensors where the setup calls for a sum or average.
+- Creates calculated columns required by the setup, such as ``e_total`` for
+  the total-irradiance bifacial setup or ``power_temp_correct`` for the
+  temperature-corrected bifacial setup.
+- Copies scalar values such as ``bifaciality``, ``power_temp_coeff``,
+  ``base_temp``, and ``spectral_module_type`` onto the measured and modeled
+  ``CapData`` objects so calculated columns use the intended assumptions.
 
-What ``setup()`` does
----------------------
-:py:meth:`~captest.captest.CapTest.setup` resolves the active preset (with any
-user overrides), propagates the scalar calc-params
-(:py:attr:`~captest.captest.CapTest.bifaciality`,
-:py:attr:`~captest.captest.CapTest.power_temp_coeff`,
-:py:attr:`~captest.captest.CapTest.base_temp`) onto both
-:py:class:`~captest.capdata.CapData` instances, wires the preset's
-:py:attr:`~captest.capdata.CapData.regression_cols` and
-:py:attr:`~captest.capdata.CapData.regression_formula` onto both sides, and
-runs :py:meth:`~captest.capdata.CapData.process_regression_columns` on both to
-materialize aggregated and calculated columns (e.g. the ``e_total`` column for
-``bifi_e2848_etotal`` or the ``power_temp_correct`` column for
-``bifi_power_tc``).
+If you change a setup value after creating ``ct``, call
+:py:meth:`~captest.captest.CapTest.setup` again before continuing.
 
-The method is re-runnable. Calling ``setup()`` a second time resets
-``data_filtered`` back to ``data.copy()`` on both instances, which is
-intentional — it lets users iterate on configuration without carrying stale
-filter state across runs.
+.. note::
+
+    Calling ``setup()`` resets ``ct.meas.data_filtered`` and
+    ``ct.sim.data_filtered`` back to the unfiltered data. This is usually what
+    you want after changing the setup, but it also means filters should be
+    re-applied after calling ``setup()`` again.
 
 Running a capacity test
 -----------------------
-After ``setup()``, drive the filter sequence, reporting conditions, and fit
-directly on the :py:class:`~captest.capdata.CapData` instances. The attributes
-held on :py:class:`~captest.captest.CapTest`
-(:py:attr:`~captest.captest.CapTest.min_irr`,
-:py:attr:`~captest.captest.CapTest.max_irr`,
-:py:attr:`~captest.captest.CapTest.fshdbm`, etc.) can be forwarded directly:
+After ``ct`` has been created, use ``ct.meas`` and ``ct.sim`` in the same way
+you would use separate ``CapData`` objects.
+
+The example below shows the general pattern. Actual filters should be selected
+to match the contract, test procedure, and data quality review.
 
 .. code-block:: Python
 
@@ -192,194 +237,135 @@ held on :py:class:`~captest.captest.CapTest`
     ct.sim.filter_shade(fshdbm=ct.fshdbm)
     ct.sim.filter_time(start='2026-03-26', end='2026-04-12')
 
-    ct.rep_cond()                # reporting conditions on ct.meas.rc
-    ct.rep_cond(which='sim')     # reporting conditions on ct.sim.rc
+    ct.rep_cond()
 
     ct.meas.fit_regression()
     ct.sim.fit_regression()
 
     cap_ratio = ct.captest_results()
 
-After computing reporting conditions, a second narrow irradiance filter around
-the reporting irradiance is common. The read-only properties
-:py:attr:`~captest.captest.CapTest.rep_irr_filter_low` and
-:py:attr:`~captest.captest.CapTest.rep_irr_filter_high` provide the fractional
-bounds derived from :py:attr:`~captest.captest.CapTest.rep_irr_filter`
-(``1 - rep_irr_filter`` and ``1 + rep_irr_filter`` respectively) for direct
-use with :py:meth:`~captest.capdata.CapData.filter_irr`:
+:py:meth:`~captest.captest.CapTest.rep_cond` calculates reporting conditions
+using the selected setup's defaults. For the standard E2848 setup, POA is
+calculated using the 60th percentile of filtered POA, while ambient temperature
+and wind speed use the mean.
+
+If reporting conditions should be calculated from modeled data instead of
+measured data, use:
+
+.. code-block:: Python
+
+    ct.rep_cond(which='sim')
+
+After reporting conditions are calculated, it is common to apply a second,
+narrower irradiance filter around the reporting irradiance.
+``ct.rep_irr_filter_low`` and ``ct.rep_irr_filter_high`` provide the lower and
+upper fractional bounds. With the default ``rep_irr_filter=0.2``, these values
+are ``0.8`` and ``1.2``.
 
 .. code-block:: Python
 
     ct.meas.filter_irr(
         ct.rep_irr_filter_low,
         ct.rep_irr_filter_high,
-        ref_val='self_val',   # uses ct.meas.rc['poa']
-    )
-    ct.sim.filter_irr(
-        ct.rep_irr_filter_low,
-        ct.rep_irr_filter_high,
-        ref_val='self_val',   # uses ct.sim.rc['poa']
+        ref_val='rep_irr',
     )
 
-:py:meth:`~captest.captest.CapTest.rep_cond` is a convenience method that
-calls :py:meth:`~captest.capdata.CapData.rep_cond` using the active preset's
-``rep_conditions`` dict as default kwargs. Keyword overrides are partial-merged
-on top: top-level keys replace, and the nested ``func`` dict is merged one
-level deep so a contract-specific percentile can be plugged in for a single
-variable without disturbing the others:
+The ``ref_val='rep_irr'`` argument uses the ``CapData.rc`` attribute if it set.
+
+Reviewing results
+-----------------
+The main comparison method is
+:py:meth:`~captest.captest.CapTest.captest_results`. It predicts the measured
+and modeled capacities at the reporting conditions, calculates the capacity
+ratio, and can print a pass/fail summary using the AC nameplate and test
+tolerance stored on your instance of Captest, e.g. ``ct``.
 
 .. code-block:: Python
 
-    from captest.captest import perc_wrap
+    cap_ratio = ct.captest_results()
 
-    # 55th-percentile POA for a project under contract; t_amb and w_vel
-    # still fall back to the preset's 'mean' aggregations.
-    ct.rep_cond(func={'poa': perc_wrap(55)})
+Additional review methods are available from the same ``CapTest`` object:
 
-Results and comparison
-----------------------
-The cross-CapData helpers previously at module level are now methods on
-:py:class:`~captest.captest.CapTest`. All of them use
-:py:attr:`~captest.captest.CapTest.meas`,
-:py:attr:`~captest.captest.CapTest.sim`,
-:py:attr:`~captest.captest.CapTest.rep_cond_source`,
-:py:attr:`~captest.captest.CapTest.ac_nameplate`, and
-:py:attr:`~captest.captest.CapTest.test_tolerance` directly — no more passing
-CapData pairs around by hand.
+- :py:meth:`~captest.captest.CapTest.captest_results_check_pvalues` compares
+  results with and without high-p-value coefficients and highlights
+  coefficients with p-values above 0.05.
+- :py:meth:`~captest.captest.CapTest.overlay_scatters` overlays the measured
+  and modeled regression scatter plots.
+- :py:meth:`~captest.captest.CapTest.residual_plot` compares measured and
+  modeled residuals against the regression variables.
+- :py:meth:`~captest.captest.CapTest.get_summary` combines the filter summaries
+  for ``ct.meas`` and ``ct.sim`` into one table.
+- :py:meth:`~captest.captest.CapTest.determine_pass_or_fail` applies the stored
+  nameplate and tolerance to a capacity ratio.
 
-- :py:meth:`~captest.captest.CapTest.captest_results` — predicts measured and
-  modeled capacities at the reporting conditions (picked from ``meas.rc`` or
-  ``sim.rc`` per :py:attr:`~captest.captest.CapTest.rep_cond_source`), returns
-  the capacity ratio, and optionally prints a pass / fail summary.
-- :py:meth:`~captest.captest.CapTest.captest_results_check_pvalues` — runs
-  :py:meth:`~captest.captest.CapTest.captest_results` twice (with and without
-  p-value zeroing) and returns a Styler highlighting any coefficient whose
-  p-value is above 0.05.
-- :py:meth:`~captest.captest.CapTest.overlay_scatters` — builds the preset's
-  scatter for both :py:class:`~captest.capdata.CapData` instances and overlays
-  them with labels. The scatter callable is picked automatically from the
-  resolved preset.
-- :py:meth:`~captest.captest.CapTest.residual_plot` — overlays regression
-  residuals vs. each exogenous variable for both instances. Replaces the
-  former ``plotting.residual_plot``.
-- :py:meth:`~captest.captest.CapTest.get_summary` — concatenates
-  ``self.meas.get_summary()`` and ``self.sim.get_summary()`` so filter history
-  for both sides is visible in one frame.
-- :py:meth:`~captest.captest.CapTest.determine_pass_or_fail` — returns a
-  ``(bool, bounds)`` tuple for a given capacity ratio using the instance's
-  tolerance and nameplate.
-
-:py:meth:`~captest.captest.CapTest.scatter_plots` dispatches to the preset's
-scatter callable on either side:
+Scatter plots
+-------------
+:py:meth:`~captest.captest.CapTest.scatter_plots` creates the scatter plot that
+matches the selected ``test_setup``. By default it plots the measured data.
 
 .. code-block:: Python
 
-    ct.scatter_plots()              # measured scatter (hv.Layout)
-    ct.scatter_plots(which='sim')   # modeled scatter
+    ct.scatter_plots()
+    ct.scatter_plots(which='sim')
 
-Customizing scatter plots
--------------------------
-The shipped scatter callables
-(:py:func:`~captest.captest.scatter_default`,
-:py:func:`~captest.captest.scatter_etotal`,
-:py:func:`~captest.captest.scatter_bifi_power_tc`) are thin wrappers around
-:py:class:`~captest.plotting.ScatterPlot` and
-:py:class:`~captest.plotting.ScatterBifiPowerTc`. Every keyword argument
-passed through :py:meth:`~captest.captest.CapTest.scatter_plots` is
-forwarded to the underlying class, so the AM/PM split, temperature-corrected
-power view, and linked-timeseries pairing are all accessible from the
-canonical call site.
+The built-in scatter plots support several options that are useful during data
+review.
 
 AM/PM split
 ~~~~~~~~~~~
-Pass ``split_day=True`` to render morning and afternoon points as two
-overlaid scatters with distinct color and marker. By default, the split
-time is picked from clear-sky GHI when available and falls back to
-``"12:30"`` otherwise:
+Use ``split_day=True`` to show morning and afternoon points separately.
 
 .. code-block:: Python
 
     ct.scatter_plots(split_day=True)
 
-When ``split_time`` is left as ``None``,
-:py:func:`~captest.util.detect_solar_noon` is called on ``cd.data`` to
-find the clock time where the per-time-of-day mean of the
-``ghi_mod_csky`` column peaks. If the column is absent
-(:py:func:`~captest.io.load_data` only adds it when called with a ``site``
-dict) a :py:class:`UserWarning` is emitted and the default ``"12:30"``
-is used. To override the boundary explicitly, pass
-``split_time="HH:MM"``:
+By default pvcaptest tries to determine the split time from modeled clear-sky
+GHI, when that information is available. Otherwise it uses ``"12:30"``. To set
+the split time manually, pass ``split_time``.
 
 .. code-block:: Python
 
     ct.scatter_plots(split_day=True, split_time='12:45')
 
-The AM and PM glyph styles can also be overridden via ``am_color``,
-``pm_color``, ``am_marker``, and ``pm_marker``.
+The marker and color styles can be adjusted with ``am_color``, ``pm_color``,
+``am_marker``, and ``pm_marker``.
 
-Temperature-corrected power axis
+Temperature-corrected power view
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-For presets where ``power`` is the raw measured power (``e2848_default``,
-``bifi_e2848_etotal``, ``e2848_spec_corrected_poa``), passing
-``tc_power=True`` swaps the y-axis to a temperature-corrected power
-column computed via
-:py:func:`~captest.calcparams.power_temp_correct`. The calculation is
-driven by a calc-params nested dict (the same grammar used by
-``TEST_SETUPS`` ``reg_cols_*`` values) and is **isolated** from
-:py:meth:`~captest.capdata.CapData.process_regression_columns` — it only
-adds a single ``power_tc_plot`` column to ``cd.data`` /
-``cd.data_filtered`` and never mutates
-:py:attr:`~captest.capdata.CapData.regression_cols` or
-:py:attr:`~captest.capdata.CapData.regression_formula`.
+Use ``tc_power=True`` to view temperature-corrected power on the y-axis for
+setups where raw power is used in the regression.
 
 .. code-block:: Python
 
-    # Uses captest.plotting.DEFAULT_TC_POWER_CALC, tuned for measured
-    # DAS data with the standard column-group inference.
     ct.scatter_plots(tc_power=True)
 
-    # Sim or non-default measurement setups: pass an explicit
-    # tc_power_calc dict that matches your column groups / column names.
-    from captest.calcparams import cell_temp
-    sim_calc = {
-        'power': 'E_Grid',
-        'cell_temp': 'TArray',
-    }
-    ct.scatter_plots(which='sim', tc_power=True, tc_power_calc=sim_calc)
+The layout can be controlled with ``tc_mode``:
 
-The layout strategy is controlled by ``tc_mode``:
+- ``'replace'`` shows one plot with temperature-corrected power on the y-axis.
+- ``'add_panel'`` shows raw power and temperature-corrected power in separate
+  panels.
+- ``'overlay'`` overlays raw power and temperature-corrected power in one plot.
 
-- ``'replace'`` (default) — single panel; y-axis is the tc-power column.
-- ``'add_panel'`` — two-panel ``hv.Layout`` with the raw-power scatter
-  on top and the tc-power scatter below.
-- ``'overlay'`` — single panel with both scatters overlaid for direct
-  comparison.
+.. code-block:: Python
+
+    ct.scatter_plots(tc_power=True, tc_mode='add_panel')
 
 .. note::
 
-    The default ``tc_power_calc`` references the column groups
-    ``real_pwr_mtr``, ``irr_poa``, and ``temp_bom``. If your
-    ``CapData`` does not include a measured back-of-module temperature
-    group ``temp_bom`` — for example, when only ambient temperature
-    and wind speed are available —
-    :py:func:`~captest.plotting.calc_tc_power_column` raises a
-    :py:class:`KeyError` listing the missing groups. Pass an explicit
-    ``tc_power_calc`` whose ``cell_temp`` branch derives BOM via
-    :py:func:`~captest.calcparams.bom_temp` from
-    ``poa`` / ``temp_amb`` / ``wind_speed``, mirroring the
-    ``bifi_power_tc`` preset's ``reg_cols_meas['power']``.
+    The default temperature-corrected power calculation expects measured power,
+    POA irradiance, and back-of-module temperature column groups. If a project
+    uses different data, pass an explicit ``tc_power_calc`` dictionary that
+    points to the correct columns or column groups.
 
-For the ``bifi_power_tc`` preset, ``power`` is already temperature-
-corrected and ``tc_power=True`` is ignored with a
-:py:class:`UserWarning`.
+    Passing a custom ``tc_power_calc`` dictionary can be used to calculate
+    cell temperature from POA irradiance, ambient temperature, wind speed, module type,
+    and mounting type.
 
-Linked timeseries pairing
-~~~~~~~~~~~~~~~~~~~~~~~~~
-Pass ``timeseries=True`` to add a linked timeseries panel beneath the
-principal scatter. Selections in the scatter highlight the corresponding
-points in the timeseries panel and vice versa. The timeseries pairing
-is incompatible with ``tc_mode='add_panel'``; combining the two raises
-:py:class:`ValueError`.
+Linked timeseries
+~~~~~~~~~~~~~~~~~
+Use ``timeseries=True`` to add a timeseries panel below the scatter plot.
+Selections in the scatter plot and timeseries plot are linked, which can help
+identify when unusual scatter points occurred.
 
 .. code-block:: Python
 
@@ -387,33 +373,20 @@ is incompatible with ``tc_mode='add_panel'``; combining the two raises
     ct.scatter_plots(split_day=True, tc_power=True, tc_mode='overlay',
                      timeseries=True)
 
-Direct ScatterPlot use and dashboards
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-:py:class:`~captest.plotting.ScatterPlot` can also be instantiated
-directly when more interactive control is desired. Every view-affecting
-parameter is decorated with ``@param.depends``, so the class drops into
-a ``panel`` dashboard without any wrapping:
+Adjusting reporting conditions
+------------------------------
+The selected ``test_setup`` provides default reporting-condition calculations,
+but they can be adjusted for a specific project. For example, to use the 55th
+percentile POA while leaving the other reporting-condition variables at their
+default calculations:
 
 .. code-block:: Python
 
-    from captest.plotting import ScatterPlot
-    sp = ScatterPlot(cd=ct.meas, split_day=True, tc_power=True)
-    sp.view()                      # hv.Layout
-    # In a notebook, swap parameters live and re-render:
-    sp.tc_mode = 'overlay'
-    sp.view()
+    from captest.captest import perc_wrap
 
-:py:class:`~captest.plotting.ScatterBifiPowerTc` is the two-panel
-subclass used by the ``bifi_power_tc`` preset. ``split_day`` and
-``timeseries`` are inherited; when ``timeseries=True`` only the first
-panel (``power vs poa``) is paired with a linked timeseries view.
+    ct.rep_cond(func={'poa': perc_wrap(55)})
 
-Overrides and the ``"custom"`` setup
-------------------------------------
-Every preset-level value can be overridden per instance without redefining the
-preset. The two most common overrides are ``reg_fml`` (regression formula) and
-``rep_conditions``. In a yaml file, overrides go under an ``overrides:``
-sub-mapping:
+The same adjustment can be saved in yaml:
 
 .. code-block:: yaml
 
@@ -421,88 +394,97 @@ sub-mapping:
       test_setup: e2848_default
       overrides:
         rep_conditions:
-          percent_filter: 10        # replaces preset percent_filter
           func:
-            poa: perc_55            # resolved to perc_wrap(55) at load time
-                                    # t_amb and w_vel preserved from the preset
+            poa: perc_55
 
-The ``"perc_N"`` string shorthand in yaml is resolved to the equivalent
-:py:func:`~captest.captest.perc_wrap` callable when the file is loaded, and
-written back as a ``"perc_N"`` string when
-:py:meth:`~captest.captest.CapTest.to_yaml` serializes the instance. Any
-string not matching the ``perc_<int>`` pattern (e.g. ``"mean"``) passes through
-unchanged as a pandas aggregation name.
+The ``perc_55`` shorthand is converted to the corresponding percentile
+function when the yaml file is loaded.
 
-When ``test_setup == "custom"``, three overrides are required:
-``reg_cols_meas``, ``reg_cols_sim``, and ``reg_fml``. The scatter callable
-falls back to :py:func:`~captest.captest.scatter_default` unless supplied
-explicitly, and ``rep_conditions`` defaults to ``{}`` (which lets
-:py:meth:`~captest.capdata.CapData.rep_cond` use its own ``func=None`` fallback
-of ``{var: 'mean' for var in rhs}``).
+Custom setups
+-------------
+Most users should start with one of the built-in setups. If a project requires
+a different regression equation, the setup can be customized by overriding the
+regression formula and the measured/model column mappings.
 
-Serialization round-trip
-------------------------
-:py:meth:`~captest.captest.CapTest.to_yaml` writes a curated subset of the
-instance's state back to a yaml file: every scalar ``param.*`` attribute,
-``test_setup``, non-default overrides for ``reg_fml`` /
-``reg_cols_meas`` / ``reg_cols_sim`` / ``rep_conditions``, ``meas_path`` /
-``sim_path`` (when the instance was constructed from paths), and non-empty
-``meas_load_kwargs`` / ``sim_load_kwargs``. Data, fitted regression results,
-the resolved preset, and loader callables are never written.
+For small changes to a built-in setup, use ``overrides``. For example, a yaml
+file can change the reporting-condition calculation without redefining the
+whole setup.
 
-By default ``to_yaml`` merges into an existing file on disk: other top-level
-keys (e.g. ``client``, ``loc``, ``system``) are preserved and only the sub-tree
-at ``key`` is overwritten. Pass ``merge_into_existing=False`` to replace the
-file unconditionally.
+For a fully custom regression, use ``test_setup: custom`` and provide:
+
+- ``reg_cols_meas``: how the measured data columns map to the regression terms.
+- ``reg_cols_sim``: how the modeled data columns map to the regression terms.
+- ``reg_fml``: the regression formula.
+
+For example:
+
+.. code-block:: yaml
+
+    captest:
+      test_setup: custom
+      meas_path: ./data/measured/
+      sim_path: ./data/pvsyst.csv
+      ac_nameplate: 6_000_000
+      overrides:
+        reg_fml: power ~ poa + t_amb
+        reg_cols_meas:
+          power: real_pwr_mtr
+          poa: irr_poa
+          t_amb: temp_amb
+        reg_cols_sim:
+          power: E_Grid
+          poa: GlobInc
+          t_amb: T_Amb
 
 .. note::
 
-    Programmatic-only attributes — ``meas_loader``, ``sim_loader``, and any
-    user-mutated ``scatter_plots`` callable on the resolved preset — cannot
-    round-trip through yaml. ``to_yaml`` emits a single
-    :py:class:`UserWarning` listing the attributes that were skipped and
-    writes the rest of the configuration as normal.
+    Custom formulas and column mappings require more care than the built-in
+    setups. Confirm that the measured and modeled columns use consistent units
+    and represent the same physical quantities before comparing results.
+
+Saving a test setup
+-------------------
+:py:meth:`~captest.captest.CapTest.to_yaml` writes the main test settings back
+to a yaml file. This can be useful after adjusting a setup in a notebook and
+wanting to save the settings for a future run.
+
+.. code-block:: Python
+
+    ct.to_yaml('./project.yaml')
+
+By default, ``to_yaml`` updates the selected section of an existing yaml file
+and preserves other top-level sections, such as project metadata. It writes
+test settings and paths, but it does not write the measured data, modeled data,
+fitted regression results, or plots.
 
 .. _spec_corrected_poa:
 
 Spectrally corrected POA (``e2848_spec_corrected_poa``)
 -------------------------------------------------------
-The ``e2848_spec_corrected_poa`` preset multiplies the regression-driving POA
-irradiance by a First Solar spectral-correction factor computed from pvlib
-per the `McCarthy 2024 PVPMC poster
+The ``e2848_spec_corrected_poa`` setup applies a First Solar spectral
+correction to POA irradiance before running the standard ASTM E2848 regression.
+This can be useful when spectral effects are part of the agreed test method.
+
+The calculation uses pvlib's First Solar spectral-correction method, based on
+the `McCarthy 2024 PVPMC poster
 <https://pvpmc.sandia.gov/download/7822/?tmstv=1776198191>`_ and the
 `pvlib.spectrum.spectral_factor_firstsolar
 <https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.spectrum.spectral_factor_firstsolar.html>`_
 reference.
 
-Inputs required on the measured :py:class:`~captest.capdata.CapData`:
+Measured data requirements:
 
-- A ``humidity`` column group (relative humidity in percent).
-- A ``pressure`` column group (station pressure in hPa / mbar).
-- A ``cd.site`` attribute with ``{'loc': {...}, 'sys': {...}}`` sub-dicts.
-  The :py:func:`~captest.io.load_data` function populates this when called
-  with the ``site`` kwarg.
+- A ``humidity`` column group with relative humidity in percent.
+- A ``pressure`` column group with station pressure in hPa / mbar.
+- A ``site`` dictionary on the measured ``CapData`` object. This is populated
+  when :py:func:`~captest.io.load_data` is called with the ``site`` argument.
 
-Inputs required on the modeled :py:class:`~captest.capdata.CapData`:
+Modeled data requirements:
 
-- A ``PrecWat`` column in the PVsyst output (configure the PVsyst export to
-  include precipitable water).
+- A ``PrecWat`` column in the PVsyst output. Configure the PVsyst export to
+  include precipitable water.
 
-At :py:meth:`~captest.captest.CapTest.setup` time the
-:py:class:`~captest.captest.CapTest` class auto-propagates ``meas.site`` onto
-``sim.site`` and converts the tz to the nearest fixed-offset ``Etc/GMT±N``
-string (PVsyst timestamps are not DST-aware). A
-:py:class:`UserWarning` describes the conversion. To use a different tz or
-site dict for the sim side, assign ``ct.sim.site = {...}`` before calling
-``setup()``.
-
-The module type passed to
-:py:func:`~captest.calcparams.spectral_factor_firstsolar` is controlled by the
-:py:attr:`~captest.captest.CapTest.spectral_module_type` parameter (default
-``'cdte'``). It is named ``spectral_module_type`` — not ``module_type`` —
-to avoid collision with the ``module_type`` kwarg of
-:py:func:`~captest.calcparams.bom_temp` and
-:py:func:`~captest.calcparams.cell_temp`.
+Example:
 
 .. code-block:: Python
 
@@ -514,7 +496,7 @@ to avoid collision with the ``module_type`` kwarg of
         'sys': {'surface_tilt': 0, 'surface_azimuth': 180, 'albedo': 0.2},
     }
     meas = load_data(path='./data/measured/', site=site)
-    sim  = load_pvsyst(path='./data/pvsyst_results.csv')
+    sim = load_pvsyst(path='./data/pvsyst_results.csv')
 
     ct = CapTest.from_params(
         test_setup='e2848_spec_corrected_poa',
@@ -522,12 +504,16 @@ to avoid collision with the ``module_type`` kwarg of
         sim=sim,
         ac_nameplate=6_000_000,
         test_tolerance='- 4',
-        spectral_module_type='cdte',   # default; override for non-CdTe plants
+        spectral_module_type='cdte',
     )
+
+The corrected irradiance column is named ``poa_spec_corrected`` and is added
+to both ``ct.meas.data`` and ``ct.sim.data`` during setup. The regression then
+uses that corrected POA value in place of raw POA irradiance.
 
 .. note::
 
-    The spectrally corrected POA column is named ``poa_spec_corrected`` and
-    is added to both ``ct.meas.data`` and ``ct.sim.data`` by
-    :py:meth:`~captest.capdata.CapData.process_regression_columns`. The
-    regression then uses this column in place of raw POA irradiance.
+    The measured-data timezone may need to be converted for the modeled side
+    because PVsyst timestamps are not daylight-savings-time aware. pvcaptest
+    handles the default conversion during setup and issues a warning describing
+    the timezone used for the modeled data.
