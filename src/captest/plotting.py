@@ -836,10 +836,6 @@ class ScatterPlot(param.Parameterized):
     - pairs the scatter with a linked timeseries panel
       (``timeseries=True``).
 
-    The class is decorated with ``@param.depends`` on every view-affecting
-    parameter so it drops cleanly into a ``panel`` dashboard, but no
-    ``dashboard()`` method is shipped here; that surface will be designed
-    when dashboard work begins.
 
     Parameters
     ----------
