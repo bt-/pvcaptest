@@ -1516,18 +1516,80 @@ class CapTest(param.Parameterized):
         return self
 
     def scatter_plots(self, which="meas", **kwargs):
-        """Call the resolved preset's ``scatter_plots`` callable.
+        """Create the scatter plot for the active capacity-test setup.
+
+        This method is intended primarily to plot a power vs irradiance scatter
+        plot that fits with a preset capacity test from the ``TEST_SETUPS``
+        defined in the ``captest`` module.
+
+        To create manual scatter plots and to see the complete list of
+        accepted kwargs and their behavior, see the docstrings for
+        :class:`captest.plotting.ScatterPlot` and
+        :class:`captest.plotting.ScatterBifiPowerTc`. ``ScatterBifiPowerTc``
+        inherits most options from ``ScatterPlot`` but ignores ``tc_power``
+        because the ``bifi_power_tc`` regression power term is already
+        temperature corrected.
+
+        The selected ``test_setup`` controls which plotting function is used.
+        During :meth:`setup`, the named setup is resolved from ``TEST_SETUPS``;
+        that resolved setup includes a ``scatter_plots`` callable matched to
+        the setup's regression formula. This method picks ``self.meas`` or
+        ``self.sim`` and forwards it, plus any keyword arguments, to that
+        callable.
+
+        Built-in setup behavior:
+
+        - ``e2848_default``, ``bifi_e2848_etotal``, and
+          ``e2848_spec_corrected_poa`` use ``ScatterPlot`` through the
+          ``scatter_default`` / ``scatter_etotal`` wrappers. These create a
+          formula-driven scatter of the regression left-hand-side variable
+          against the first right-hand-side variable.
+        - ``bifi_power_tc`` uses ``ScatterBifiPowerTc`` through the
+          ``scatter_bifi_power_tc`` wrapper. This creates one panel for each
+          right-hand-side variable in the bifacial temperature-corrected
+          regression, typically ``power vs poa`` and ``power vs rpoa``.
+
+        All keyword arguments are forwarded to the underlying plotting class.
+        The most commonly used options are:
+
+        - ``filtered``: use ``data_filtered`` when True, otherwise ``data``.
+        - ``split_day`` and ``split_time``: split points into AM and PM groups.
+        - ``am_color``, ``pm_color``, ``am_marker``, and ``pm_marker``:
+          customize AM / PM glyph style.
+        - ``tc_power``, ``tc_mode``, ``tc_power_calc``, and
+          ``tc_force_recompute``: show temperature-corrected power for setups
+          whose regression still uses raw power. ``tc_mode`` can be
+          ``"replace"``, ``"add_panel"``, or ``"overlay"``.
+        - ``timeseries``: add a linked timeseries panel below the scatter.
+        - ``height`` and ``width``: set plot dimensions.
 
         Parameters
         ----------
         which : {'meas', 'sim'}
-            Which CapData instance to plot.
+            Which :class:`captest.capdata.CapData` instance to plot.
         **kwargs
-            Forwarded to the preset's scatter callable.
+            Plotting options forwarded to the preset's scatter callable.
 
         Returns
         -------
-        hv.Layout
+        holoviews.Layout
+            Scatter plot layout for the selected measured or modeled data.
+
+        Examples
+        --------
+        Plot measured data with the default options::
+
+            ct.scatter_plots()
+
+        Plot modeled data, split points into AM and PM groups, and add a
+        linked timeseries panel::
+
+            ct.scatter_plots(which="sim", split_day=True, timeseries=True)
+
+        Add a temperature-corrected power panel for a setup that uses raw
+        power in the regression::
+
+            ct.scatter_plots(tc_power=True, tc_mode="add_panel")
         """
         cd = self._pick_cd(which)
         self._require_setup()
