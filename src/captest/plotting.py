@@ -889,6 +889,9 @@ class ScatterPlot(param.Parameterized):
         exists on ``cd.data``.
     timeseries : bool, default False
         Pair the principal scatter with a linked timeseries panel below.
+        The timeseries panel overlays a thin gray curve of the full
+        unfiltered y-series under the linked scatter of the filtered
+        data so removed points remain visible as background context.
         Only valid for the single-panel ``tc_mode`` values
         (``replace`` and ``overlay``); raises ``ValueError`` if combined
         with ``tc_mode='add_panel'``.
@@ -1033,7 +1036,13 @@ class ScatterPlot(param.Parameterized):
         return self._build_scatter(df, x_col, y_col)
 
     def _attach_timeseries(self, principal, df, x_col, y_col):
-        """Append a linked timeseries panel below ``principal``."""
+        """Append a linked timeseries panel below ``principal``.
+
+        The bottom panel overlays the linked scatter of the filtered
+        ``y_col`` series on top of a thin gray ``hv.Curve`` of the
+        full unfiltered ``y_col`` series, so points removed by
+        filtering remain visible as background context.
+        """
         timeseries = hv.Scatter(df, "index", [y_col, x_col]).opts(
             tools=["hover", "lasso_select", "box_select"],
             height=self.height,
@@ -1043,7 +1052,34 @@ class ScatterPlot(param.Parameterized):
             selection_line_color="red",
         )
         DataLink(principal, timeseries)
-        return (principal + timeseries).cols(1)
+
+        # ``y_col`` is the semantic regression-formula name (e.g. ``power``)
+        # which may not exist as a literal column on ``cd.data``; resolve
+        # it through ``regression_cols`` to recover the underlying column
+        # holding the unfiltered series.
+        if y_col in self.cd.data.columns:
+            full_series = self.cd.data[y_col]
+        elif y_col in self.cd.regression_cols and (
+            self.cd.regression_cols[y_col] in self.cd.data.columns
+        ):
+            full_series = self.cd.data[self.cd.regression_cols[y_col]]
+        else:
+            full_series = None
+
+        if full_series is not None:
+            full_df = full_series.rename(y_col).reset_index()
+            full_df = full_df.rename(columns={full_df.columns[0]: "index"})
+            background = hv.Curve(full_df, "index", y_col).opts(
+                color="gray",
+                line_width=0.75,
+                height=self.height,
+                width=self.width * 2,
+            )
+            timeseries_panel = background * timeseries
+        else:
+            timeseries_panel = timeseries
+
+        return (principal + timeseries_panel).cols(1)
 
     @param.depends(*_VIEW_DEPENDS)
     def view(self):

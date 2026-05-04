@@ -321,6 +321,91 @@ class TestScatterPlotView:
         assert isinstance(layout, hv.Layout)
         assert len(layout) == 2
 
+    def test_timeseries_overlays_unfiltered_power_as_thin_gray_curve(self, synth_cd):
+        """Timeseries panel includes a thin gray Curve of unfiltered power.
+
+        The bottom panel of the layout should be an Overlay containing
+        an ``hv.Curve`` of the full ``cd.data`` y-series (rendered
+        underneath) and an ``hv.Scatter`` of the filtered y-series
+        (rendered on top). The Curve must use a gray color and a thin
+        line_width so the filtered scatter remains the visual focus.
+        """
+        # Drop every other row from the filtered data so the Curve
+        # (full data) and the Scatter (filtered data) have different
+        # row counts and we can verify which series each plots.
+        synth_cd.data_filtered = synth_cd.data.iloc[::2].copy()
+
+        sp = plotting.ScatterPlot(cd=synth_cd, timeseries=True)
+        layout = sp.view()
+
+        panels = list(layout)
+        assert len(panels) == 2
+        timeseries_panel = panels[1]
+        assert isinstance(timeseries_panel, hv.Overlay)
+
+        elements = list(timeseries_panel)
+        curves = [el for el in elements if isinstance(el, hv.Curve)]
+        scatters = [el for el in elements if isinstance(el, hv.Scatter)]
+        assert len(curves) == 1
+        assert len(scatters) == 1
+        curve, scatter = curves[0], scatters[0]
+
+        # Curve is drawn before the scatter so it sits underneath.
+        assert elements.index(curve) < elements.index(scatter)
+
+        # Curve plots the unfiltered series; scatter plots the filtered.
+        assert len(curve) == len(synth_cd.data)
+        assert len(scatter) == len(synth_cd.data_filtered)
+
+        # Both series share the same y-column.
+        assert curve.vdims[0].name == scatter.vdims[0].name
+
+        # Curve is styled thin and gray.
+        style_kwargs = hv.Store.lookup_options("bokeh", curve, "style").kwargs
+        assert style_kwargs.get("color") == "gray"
+        assert style_kwargs.get("line_width", 1.0) <= 1.0
+
+    def test_timeseries_curve_resolves_semantic_y_via_regression_cols(self, synth_cd):
+        """Curve is built when ``y_col`` is a semantic regression name.
+
+        Real ``CapData`` instances built through ``CapTest`` have
+        ``regression_formula`` written in semantic names (e.g.
+        ``power ~ poa + ...``) while ``cd.data`` holds the underlying
+        aggregated columns (e.g. ``real_pwr_mtr_sum_agg``). The
+        timeseries Curve must look up the underlying column through
+        ``regression_cols`` rather than expecting the semantic name to
+        appear directly on ``cd.data``.
+        """
+        # Rename underlying data columns so they no longer match the
+        # semantic names used by the regression formula.
+        synth_cd.data = synth_cd.data.rename(
+            columns={
+                "power": "real_pwr_mtr_sum_agg",
+                "poa": "irr_poa_mean_agg",
+                "t_amb": "temp_amb_mean_agg",
+                "w_vel": "wind_speed_mean_agg",
+            }
+        )
+        synth_cd.data_filtered = synth_cd.data.copy()
+        synth_cd.regression_cols = {
+            "power": "real_pwr_mtr_sum_agg",
+            "poa": "irr_poa_mean_agg",
+            "t_amb": "temp_amb_mean_agg",
+            "w_vel": "wind_speed_mean_agg",
+        }
+
+        layout = plotting.ScatterPlot(cd=synth_cd, timeseries=True).view()
+        timeseries_panel = list(layout)[1]
+        assert isinstance(timeseries_panel, hv.Overlay)
+        elements = list(timeseries_panel)
+        curves = [el for el in elements if isinstance(el, hv.Curve)]
+        assert len(curves) == 1
+        # Curve plots the full underlying ``real_pwr_mtr_sum_agg`` series
+        # but exposes it under the semantic ``power`` vdim so it shares a
+        # y-axis with the linked scatter.
+        assert len(curves[0]) == len(synth_cd.data)
+        assert curves[0].vdims[0].name == "power"
+
     def test_view_requires_cd(self):
         with pytest.raises(ValueError, match="cd must be set"):
             plotting.ScatterPlot().view()
