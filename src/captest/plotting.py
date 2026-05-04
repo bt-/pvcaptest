@@ -14,7 +14,7 @@ import param
 from bokeh.models import NumeralTickFormatter
 
 from captest import util
-from captest.calcparams import cell_temp
+from captest.calcparams import cell_temp, power_temp_correct
 from .util import tags_by_regex, read_json
 
 if TYPE_CHECKING:
@@ -58,12 +58,17 @@ TC_POWER_PLOT_COL = "power_tc_plot"
 # back-of-module temperature group ``temp_bom`` is available. Sim users
 # must pass an explicit ``tc_power_calc``.
 DEFAULT_TC_POWER_CALC = {
-    "power": ("real_pwr_mtr", "sum"),
-    "cell_temp": (
-        cell_temp,
+    "power": (
+        power_temp_correct,
         {
-            "poa": ("irr_poa", "mean"),
-            "bom": ("temp_bom", "mean"),
+            "power": ("real_pwr_mtr", "sum"),
+            "cell_temp": (
+                cell_temp,
+                {
+                    "poa": ("irr_poa", "mean"),
+                    "bom": ("temp_bom", "mean"),
+                },
+            ),
         },
     ),
 }
@@ -724,7 +729,8 @@ def calc_tc_power_column(
         Calc-params nested dict mirroring the bifi_power_tc preset's
         ``reg_cols_meas['power']`` value. The outermost callable must
         produce a Series of temperature-corrected power values; in
-        practice this is ``calcparams.power_temp_correct``.
+        practice this is ``calcparams.power_temp_correct``. The dict must
+        contain a top-level ``"power"`` calculation tuple.
     col_name : str, default ``TC_POWER_PLOT_COL``
         Name of the column written to ``cd.data`` / ``cd.data_filtered``.
     verbose : bool, default False
@@ -743,6 +749,9 @@ def calc_tc_power_column(
     KeyError
         When ``tc_power_calc`` references a column-group id that is
         missing from ``cd.column_groups``.
+    ValueError
+        When ``tc_power_calc`` does not contain a top-level ``"power"``
+        calculation tuple that produces a column in ``cd.data``.
     """
     if (not force_recompute) and (col_name in cd.data.columns):
         return col_name
@@ -760,6 +769,19 @@ def calc_tc_power_column(
             f"explicit `tc_power_calc` dict that matches this CapData's "
             f"groups."
         )
+    if (
+        not isinstance(tc_power_calc, dict)
+        or "power" not in tc_power_calc
+        or not isinstance(tc_power_calc["power"], tuple)
+        or len(tc_power_calc["power"]) != 2
+        or not callable(tc_power_calc["power"][0])
+        or not isinstance(tc_power_calc["power"][1], dict)
+    ):
+        raise ValueError(
+            "calc_tc_power_column requires tc_power_calc to include a "
+            "top-level 'power' calculation tuple, such as "
+            "'power': (power_temp_correct, {...})."
+        )
 
     # Deep-copy the calc spec so transform_calc_params doesn't mutate the
     # caller's dict in place. transform_calc_params operates by walking
@@ -771,24 +793,20 @@ def calc_tc_power_column(
 
     # ``result`` is a dict with the same shape as the input, but with the
     # calculation tuples replaced by the function names of the columns
-    # they wrote to. The outermost calculation's product (e.g.
-    # ``power_temp_correct``) is the column we want to expose under
-    # ``col_name``.
-    produced_col = None
-    if isinstance(result, dict):
-        # Pick the first entry whose value is a column-name string that now
-        # lives in cd.data. With the canonical tc_power_calc shape this is
-        # ``power`` -> ``"power_temp_correct"``.
-        for key, value in result.items():
-            if isinstance(value, str) and value in cd.data.columns:
-                produced_col = value
-                break
-    if produced_col is None:
-        raise KeyError(
+    # they wrote to. The top-level ``power`` calculation's product (e.g.
+    # ``power_temp_correct``) is the column we expose under ``col_name``.
+    if not isinstance(result, dict) or "power" not in result:
+        raise ValueError(
+            "calc_tc_power_column requires tc_power_calc to include a "
+            "top-level 'power' calculation."
+        )
+    produced_col = result["power"]
+    if not isinstance(produced_col, str) or produced_col not in cd.data.columns:
+        raise ValueError(
             "calc_tc_power_column could not identify the produced "
             "temperature-corrected power column. Ensure tc_power_calc "
             "includes a calculation tuple at the top level (e.g. "
-            "(power_temp_correct, {...}))."
+            "'power': (power_temp_correct, {...}))."
         )
 
     cd.data[col_name] = cd.data[produced_col]

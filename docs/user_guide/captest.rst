@@ -358,8 +358,10 @@ The layout can be controlled with ``tc_mode``:
     points to the correct columns or column groups.
 
     Passing a custom ``tc_power_calc`` dictionary can be used to calculate
-    cell temperature from POA irradiance, ambient temperature, wind speed, module type,
-    and mounting type.
+    cell temperature from POA irradiance, ambient temperature, wind speed,
+    module type, and mounting type. The dictionary must include a top-level
+    ``power`` calculation tuple that produces the temperature-corrected power
+    column, such as ``{'power': (power_temp_correct, {...})}``.
 
 Linked timeseries
 ~~~~~~~~~~~~~~~~~

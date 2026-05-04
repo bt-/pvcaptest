@@ -110,6 +110,12 @@ non-default regression presets prefer `CapTest.scatter_plots`, which picks
 the correct scatter callable (single or multi-panel) from the resolved
 preset.
 
+### Fixed
+- Fixed `tc_power=True` scatter plots so `power_tc_plot` is populated from
+the temperature-corrected `power_temp_correct` calculation instead of raw
+aggregated power. Custom `tc_power_calc` dictionaries now raise `ValueError`
+unless they define a top-level `power` calculation tuple.
+
 ### Convention
 - The left-hand-side key of the regression formula is always `"power"`
 across shipped `TEST_SETUPS` presets, even when the formula regresses a

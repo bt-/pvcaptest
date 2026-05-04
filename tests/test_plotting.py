@@ -159,15 +159,20 @@ class TestCalcTcPowerColumn:
         # Mirror DEFAULT_TC_POWER_CALC but force the synthetic fixture's
         # column-group ids so it works without depending on default
         # column-group inference.
-        from captest.calcparams import cell_temp
+        from captest.calcparams import cell_temp, power_temp_correct
 
         return {
-            "power": ("real_pwr_mtr", "sum"),
-            "cell_temp": (
-                cell_temp,
+            "power": (
+                power_temp_correct,
                 {
-                    "poa": ("irr_poa", "mean"),
-                    "bom": ("temp_bom", "mean"),
+                    "power": ("real_pwr_mtr", "sum"),
+                    "cell_temp": (
+                        cell_temp,
+                        {
+                            "poa": ("irr_poa", "mean"),
+                            "bom": ("temp_bom", "mean"),
+                        },
+                    ),
                 },
             ),
         }
@@ -184,6 +189,13 @@ class TestCalcTcPowerColumn:
         plotting.calc_tc_power_column(synth_cd, self._calc_spec())
         assert synth_cd.regression_cols == before_cols
         assert synth_cd.regression_formula == before_formula
+
+    def test_temperature_corrected_power_differs_from_input_power(self, synth_cd):
+        """Verify the plot-only temperature-corrected power is not raw power."""
+        input_power = synth_cd.data["power"].copy()
+        col = plotting.calc_tc_power_column(synth_cd, self._calc_spec())
+        assert not np.allclose(synth_cd.data[col], input_power)
+        assert not np.allclose(synth_cd.data_filtered[col], input_power)
 
     def test_idempotent_short_circuit(self, synth_cd):
         plotting.calc_tc_power_column(synth_cd, self._calc_spec())
@@ -210,6 +222,23 @@ class TestCalcTcPowerColumn:
         synth_cd.data_filtered = synth_cd.data.copy()
         with pytest.raises(KeyError):
             plotting.calc_tc_power_column(synth_cd, self._calc_spec())
+
+    def test_rejects_spec_without_top_level_power_calculation(self, synth_cd):
+        """Verify raw-power-only calc specs are rejected instead of copied."""
+        from captest.calcparams import cell_temp
+
+        calc_spec = {
+            "power": ("real_pwr_mtr", "sum"),
+            "cell_temp": (
+                cell_temp,
+                {
+                    "poa": ("irr_poa", "mean"),
+                    "bom": ("temp_bom", "mean"),
+                },
+            ),
+        }
+        with pytest.raises(ValueError, match="top-level 'power' calculation tuple"):
+            plotting.calc_tc_power_column(synth_cd, calc_spec)
 
 
 # --- ScatterPlot.view -------------------------------------------------------
