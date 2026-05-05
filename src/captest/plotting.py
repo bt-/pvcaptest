@@ -1009,34 +1009,70 @@ class ScatterPlot(param.Parameterized):
             **scatter_kwargs
         )
 
-    def _build_split_overlay(self, df, x_col, y_col):
-        """Return ``hv.Overlay`` of AM and PM Scatters with distinct styles."""
-        am_df = df[df["period"] == "am"]
-        pm_df = df[df["period"] == "pm"]
-        common = dict(
+    def _build_split_unified(self, df, x_col, y_col):
+        """Single-CDS Scatter with categorical AM/PM color/marker.
+
+        Returns ``(display, link_target)`` where ``display`` is an
+        ``hv.Overlay`` containing one real Scatter (single
+        ColumnDataSource, glyphs colored/markered per ``period`` via
+        ``hv.dim`` transforms) plus two NaN-coord decoy Scatters whose
+        sole purpose is to populate the bokeh legend with ``am``/``pm``
+        entries (their ``apply_ranges=False`` opt keeps them out of
+        autoscale). ``link_target`` is the inner real Scatter and is
+        what callers pass to ``DataLink`` so the source-side plot
+        exposes the ``'source'`` handle that ``DataLinkCallback``
+        requires.
+        """
+        color_map = {"am": self.am_color, "pm": self.pm_color}
+        marker_map = {"am": self.am_marker, "pm": self.pm_marker}
+        real = hv.Scatter(df, x_col, [y_col, "index", "period"]).opts(
+            color=hv.dim("period").categorize(color_map),
+            marker=hv.dim("period").categorize(marker_map),
             size=5,
             tools=["hover", "lasso_select", "box_select"],
-            legend_position="right",
             height=self.height,
             width=self.width,
             yformatter=NumeralTickFormatter(format="0,0"),
+            show_legend=False,
         )
-        am = hv.Scatter(am_df, x_col, [y_col, "index"], label="am").opts(
-            color=self.am_color, marker=self.am_marker, **common
+        decoy_am = hv.Scatter([(np.nan, np.nan)], label="am").opts(
+            color=color_map["am"],
+            marker=marker_map["am"],
+            size=5,
+            apply_ranges=False,
         )
-        pm = hv.Scatter(pm_df, x_col, [y_col, "index"], label="pm").opts(
-            color=self.pm_color, marker=self.pm_marker, **common
+        decoy_pm = hv.Scatter([(np.nan, np.nan)], label="pm").opts(
+            color=color_map["pm"],
+            marker=marker_map["pm"],
+            size=5,
+            apply_ranges=False,
         )
-        return am * pm
+        display = (real * decoy_am * decoy_pm).opts(
+            legend_position="right",
+            show_legend=True,
+        )
+        return display, real
 
     def _principal(self, df, x_col, y_col):
-        """Build the principal scatter (single Scatter or AM/PM Overlay)."""
-        if self.split_day:
-            return self._build_split_overlay(df, x_col, y_col)
-        return self._build_scatter(df, x_col, y_col)
+        """Return ``(display, link_target)`` for the principal panel.
 
-    def _attach_timeseries(self, principal, df, x_col, y_col):
-        """Append a linked timeseries panel below ``principal``.
+        ``display`` is the element placed in the layout. ``link_target``
+        is a single ``hv.Scatter`` (single ColumnDataSource) suitable
+        for passing to :class:`DataLink`; for the no-split case it is
+        identical to ``display``.
+        """
+        if self.split_day:
+            return self._build_split_unified(df, x_col, y_col)
+        scatter = self._build_scatter(df, x_col, y_col)
+        return scatter, scatter
+
+    def _attach_timeseries(self, principal_display, principal_link, df, x_col, y_col):
+        """Append a linked timeseries panel below ``principal_display``.
+
+        ``principal_link`` is the single ``hv.Scatter`` (single
+        ColumnDataSource) that the timeseries scatter is data-linked
+        to; ``principal_display`` is what is placed in the layout and
+        may be an ``hv.Overlay`` containing legend decoys.
 
         The bottom panel overlays the linked scatter of the filtered
         ``y_col`` series on top of a thin gray ``hv.Curve`` of the
@@ -1051,7 +1087,7 @@ class ScatterPlot(param.Parameterized):
             selection_fill_color="red",
             selection_line_color="red",
         )
-        DataLink(principal, timeseries)
+        DataLink(principal_link, timeseries)
 
         # ``y_col`` is the semantic regression-formula name (e.g. ``power``)
         # which may not exist as a literal column on ``cd.data``; resolve
@@ -1079,7 +1115,7 @@ class ScatterPlot(param.Parameterized):
         else:
             timeseries_panel = timeseries
 
-        return (principal + timeseries_panel).cols(1)
+        return (principal_display + timeseries_panel).cols(1)
 
     @param.depends(*_VIEW_DEPENDS)
     def view(self):
@@ -1098,7 +1134,10 @@ class ScatterPlot(param.Parameterized):
         ------
         ValueError
             If ``cd`` is unset, or if ``timeseries=True`` is combined with
-            ``tc_mode='add_panel'``.
+            ``tc_mode='add_panel'``, or if ``timeseries=True`` is combined
+            with ``tc_power=True`` and ``tc_mode='overlay'`` (the linked
+            timeseries panel can only display a single y-series, so an
+            overlaid raw + tc-power principal is ambiguous).
         ImportError
             If ``holoviews`` is not installed.
         """
@@ -1109,6 +1148,13 @@ class ScatterPlot(param.Parameterized):
             raise ValueError(
                 "ScatterPlot does not support timeseries=True with "
                 "tc_mode='add_panel'; pick 'replace' or 'overlay'."
+            )
+        if self.timeseries and self.tc_power and self.tc_mode == "overlay":
+            raise ValueError(
+                "ScatterPlot does not support timeseries=True with "
+                "tc_power=True and tc_mode='overlay'; the timeseries "
+                "panel can only display one y-series. Pick "
+                "tc_mode='replace' or set tc_power=False."
             )
 
         lhs, rhs, df = self._resolve_xy()
@@ -1127,29 +1173,29 @@ class ScatterPlot(param.Parameterized):
         df = df.reset_index()
         df = df.rename(columns={df.columns[0]: "index"})
 
-        raw_principal = self._principal(df, x_col, y_col)
+        raw_display, raw_link = self._principal(df, x_col, y_col)
         if tc_active:
-            tc_principal = self._principal(df, x_col, tc_col)
+            tc_display, tc_link = self._principal(df, x_col, tc_col)
         else:
-            tc_principal = None
+            tc_display, tc_link = None, None
 
         if not tc_active or self.tc_mode == "replace":
-            principal = tc_principal if tc_active else raw_principal
-            layout = hv.Layout([principal])
-            principal_for_link = principal
+            display = tc_display if tc_active else raw_display
+            link = tc_link if tc_active else raw_link
+            layout = hv.Layout([display])
             principal_y = tc_col if tc_active else y_col
         elif self.tc_mode == "add_panel":
-            layout = hv.Layout([raw_principal, tc_principal])
-            principal_for_link = raw_principal
+            layout = hv.Layout([raw_display, tc_display])
+            link = raw_link  # not used: timeseries=True is guarded above
             principal_y = y_col
-        else:  # overlay
-            principal = raw_principal * tc_principal
-            layout = hv.Layout([principal])
-            principal_for_link = principal
+        else:  # overlay (tc_active=True; timeseries=True is guarded above)
+            display = raw_display * tc_display
+            layout = hv.Layout([display])
+            link = raw_link
             principal_y = y_col
 
         if self.timeseries:
-            return self._attach_timeseries(principal_for_link, df, x_col, principal_y)
+            return self._attach_timeseries(display, link, df, x_col, principal_y)
 
         return layout
 
@@ -1199,15 +1245,16 @@ class ScatterBifiPowerTc(ScatterPlot):
         df = df.reset_index()
         df = df.rename(columns={df.columns[0]: "index"})
 
-        panels = [self._principal(df, x_col, y_col) for x_col in rhs]
+        panel_pairs = [self._principal(df, x_col, y_col) for x_col in rhs]
+        displays = [d for d, _ in panel_pairs]
+        links = [link_target for _, link_target in panel_pairs]
 
         if self.timeseries:
-            first_panel = panels[0]
-            paired = self._attach_timeseries(first_panel, df, rhs[0], y_col)
+            paired = self._attach_timeseries(displays[0], links[0], df, rhs[0], y_col)
             # ``paired`` is a Layout; combine with the remaining panels.
-            remaining = panels[1:]
+            remaining = displays[1:]
             if remaining:
                 return hv.Layout([paired, *remaining])
             return paired
 
-        return hv.Layout(panels)
+        return hv.Layout(displays)

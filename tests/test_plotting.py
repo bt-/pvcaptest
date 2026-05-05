@@ -254,8 +254,29 @@ class TestScatterPlotView:
     def test_split_day_principal_is_overlay(self, synth_cd):
         layout = plotting.ScatterPlot(cd=synth_cd, split_day=True).view()
         principal = list(layout)[0]
-        # AM and PM scatters compose into an Overlay.
+        # The unified split principal is an Overlay of the real Scatter
+        # and two NaN-coord decoy Scatters that supply legend entries.
         assert isinstance(principal, hv.Overlay)
+
+    def test_split_day_unified_principal_has_one_real_scatter_and_two_decoys(
+        self, synth_cd
+    ):
+        """Split-day principal has one real CDS + two NaN decoys for legend."""
+        layout = plotting.ScatterPlot(cd=synth_cd, split_day=True).view()
+        principal = list(layout)[0]
+        elements = list(principal)
+        scatters = [el for el in elements if isinstance(el, hv.Scatter)]
+        assert len(scatters) == 3
+        # Identify the decoys: their data is a single NaN row.
+        non_decoy = [s for s in scatters if len(s) > 1]
+        decoys = [s for s in scatters if len(s) == 1]
+        assert len(non_decoy) == 1
+        assert len(decoys) == 2
+        # The single real scatter holds every filtered row.
+        assert len(non_decoy[0]) == len(synth_cd.data_filtered)
+        # Decoys carry am/pm labels for the bokeh legend.
+        labels = sorted(d.label for d in decoys)
+        assert labels == ["am", "pm"]
 
     def test_split_day_with_explicit_split_time(self, synth_cd):
         # Explicit override should not consult detect_solar_noon.
@@ -314,6 +335,41 @@ class TestScatterPlotView:
         )
         with pytest.raises(ValueError, match="add_panel"):
             sp.view()
+
+    def test_tc_overlay_plus_timeseries_raises(self, synth_cd):
+        """tc_power + tc_mode='overlay' + timeseries=True is unsupported.
+
+        The linked timeseries panel can only display a single y-series,
+        so an overlaid raw + tc-power principal is ambiguous. The error
+        must surface at construction time rather than as a bokeh
+        KeyError at render time.
+        """
+        sp = plotting.ScatterPlot(
+            cd=synth_cd,
+            tc_power=True,
+            tc_mode="overlay",
+            tc_power_calc=TestCalcTcPowerColumn()._calc_spec(),
+            timeseries=True,
+        )
+        with pytest.raises(ValueError, match="tc_mode='overlay'"):
+            sp.view()
+
+    def test_split_day_with_timeseries_renders_without_error(self, synth_cd):
+        """split_day=True + timeseries=True must render through bokeh.
+
+        Previously this combination raised ``KeyError: 'source'`` deep
+        inside ``DataLinkCallback`` because the principal panel was an
+        AM/PM Overlay of two separate ColumnDataSources, leaving no
+        top-level ``source`` handle for ``DataLink`` to attach to. The
+        unified single-CDS principal makes ``DataLink`` work.
+        """
+        sp = plotting.ScatterPlot(cd=synth_cd, split_day=True, timeseries=True)
+        layout = sp.view()
+        # Force bokeh to materialize the plot tree; this is what was
+        # raising KeyError before the fix.
+        hv.renderer("bokeh").get_plot(layout)
+        assert isinstance(layout, hv.Layout)
+        assert len(layout) == 2
 
     def test_timeseries_replace_returns_two_panel_layout(self, synth_cd):
         sp = plotting.ScatterPlot(cd=synth_cd, timeseries=True)
