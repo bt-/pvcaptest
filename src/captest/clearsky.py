@@ -103,6 +103,46 @@ def pvlib_system(sys):
     return system
 
 
+# pandas 3 raises ValueError for an unresolvable ambiguous time; pandas 2.x raises
+# pytz's AmbiguousTimeError, which is not a ValueError. pytz is optional in pandas 3.
+try:
+    from pytz.exceptions import AmbiguousTimeError as _PytzAmbiguousTimeError
+
+    _AMBIGUOUS_ERRORS = (ValueError, _PytzAmbiguousTimeError)
+except ImportError:  # pragma: no cover
+    _AMBIGUOUS_ERRORS = (ValueError,)
+
+
+def localize_index(index, tz, nonexistent="NaT"):
+    """
+    Localize a naive DatetimeIndex, tolerating a de-duplicated fall-back hour.
+
+    The repeated hour is resolved with ``ambiguous="infer"`` when both copies are
+    present. ``util.reindex_datetime`` keeps only the first copy, which ``infer``
+    cannot resolve, so those timestamps are assumed to be DST. That is what the
+    first copy is, and solar calculations are unaffected because the hour is
+    overnight. Any other index ``infer`` rejects, such as one with both copies
+    already sorted together, takes the same assume-DST path and is not reported.
+
+    Parameters
+    ----------
+    index : DatetimeIndex
+        Timezone-naive index of local wall-clock times.
+    tz : str
+        Timezone to localize to.
+    nonexistent : str, default "NaT"
+        Passed to ``tz_localize`` for times in the spring-forward gap.
+
+    Returns
+    -------
+    DatetimeIndex with timezone
+    """
+    try:
+        return index.tz_localize(tz, ambiguous="infer", nonexistent=nonexistent)
+    except _AMBIGUOUS_ERRORS:
+        return index.tz_localize(tz, ambiguous=True, nonexistent=nonexistent)
+
+
 def get_tz_index(time_source, loc):
     """
     Create DatetimeIndex with timezone aligned with location dictionary.
@@ -129,10 +169,7 @@ def get_tz_index(time_source, loc):
         time_source = time_source.index
     if isinstance(time_source, pd.core.indexes.datetimes.DatetimeIndex):
         if time_source.tz is None:
-            time_source = time_source.tz_localize(
-                loc["tz"], ambiguous="infer", nonexistent="NaT"
-            )
-            return time_source
+            return localize_index(time_source, loc["tz"])
         else:
             if loc["tz"] != str(time_source.tz):
                 warnings.warn(

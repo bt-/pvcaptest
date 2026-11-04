@@ -20,6 +20,7 @@ import sklearn.covariance as sk_cv
 import statsmodels.formula.api as smf
 
 from captest import util
+from captest.clearsky import localize_index
 
 pvlib_spec = importlib.util.find_spec("pvlib")
 if pvlib_spec is not None:
@@ -895,7 +896,10 @@ class Time(BaseFilter):
 
     The legacy ``wrap_year`` flag is intentionally not supported here; the
     wrap-year functionality has moved to CapTest's auto-wrap step at setup
-    time so sim data is already contiguous before any filtering runs.
+    time so sim data is already contiguous before any filtering runs. That wrap
+    spans two calendar years, so on wrapped data a date outside the data is
+    moved one year to land inside it, which is how a window pinned in the
+    typical year keeps working when the measured window nears the year end.
     """
 
     start = param.Parameter(default=None, doc="Window start (str or Timestamp).")
@@ -925,6 +929,12 @@ class Time(BaseFilter):
         start = self._parse(self.start)
         end = self._parse(self.end)
         test_date = self._parse(self.test_date)
+
+        shift = self._wrapped_year_shift((start, end, test_date), capdata)
+        if shift is not None:
+            start = None if start is None else start + shift
+            end = None if end is None else end + shift
+            test_date = None if test_date is None else test_date + shift
 
         if test_date is not None:
             if self.days is None:
@@ -977,6 +987,28 @@ class Time(BaseFilter):
         if self.tz is not None:
             ts = ts.tz_localize(self.tz) if ts.tz is None else ts.tz_convert(self.tz)
         return ts
+
+    @staticmethod
+    def _wrapped_year_shift(dates, capdata):
+        """The one-year offset that moves ``dates`` into wrapped sim data.
+
+        ``None`` unless every given date is on the same side of the data, so a
+        window overlapping it stays in one piece. Only data wrapped by
+        ``CapTest._maybe_wrap_sim_year_end`` qualifies, and that data is always
+        naive: a date outside any other data, such as measured data, means what
+        it says.
+        """
+        if getattr(capdata, "_pre_wrap_data", None) is None:
+            return None
+        given = [date for date in dates if date is not None]
+        if not given or any(date.tz is not None for date in given):
+            return None
+        index = capdata.data.index
+        if min(given) > index[-1]:
+            return pd.DateOffset(years=-1)
+        if max(given) < index[0]:
+            return pd.DateOffset(years=1)
+        return None
 
     @staticmethod
     def _zone_kind(ts):
@@ -1559,15 +1591,13 @@ class Backtracking(BaseFilter):
         ``calcparams.apparent_zenith``: a tz-naive index is localized with the
         site tz; results are returned tz-naive and reindexed to ``df.index``.
 
-        Ambiguity policy: fall-back DST duplicates are localized with
-        ``ambiguous=True`` (assume DST) and spring-forward gaps with
-        ``nonexistent="shift_forward"`` rather than ``"infer"``/``"NaT"``. A lone
-        ambiguous local timestamp makes ``ambiguous="infer"`` raise, which would
-        crash the filter; these near-midnight edge intervals sit below the
-        horizon (``apparent_zenith > 90``), where the predicate is ``False``
-        regardless, so the exact wall-clock offset does not affect the result.
-        Any residual localization error is caught by ``_execute`` and turned
-        into a warn-and-no-op.
+        Ambiguity policy: :func:`captest.clearsky.localize_index` resolves the
+        fall-back hour, and spring-forward gaps use
+        ``nonexistent="shift_forward"`` rather than ``"NaT"``. These near-midnight
+        edge intervals sit below the horizon (``apparent_zenith > 90``), where the
+        predicate is ``False`` regardless, so the exact wall-clock offset does not
+        affect the result. Any residual localization error is caught by
+        ``_execute`` and turned into a warn-and-no-op.
         """
         from pvlib.location import Location
 
@@ -1575,9 +1605,7 @@ class Backtracking(BaseFilter):
         location = Location(**loc)
         times = df.index
         if times.tz is None:
-            times = times.tz_localize(
-                loc["tz"], ambiguous=True, nonexistent="shift_forward"
-            )
+            times = localize_index(times, loc["tz"], nonexistent="shift_forward")
         solpos = location.get_solarposition(times)
         solpos.index = solpos.index.tz_localize(None)
         target = df.index.tz_localize(None) if df.index.tz is not None else df.index
