@@ -115,6 +115,16 @@ class TestFlattenMultiIndex:
             "met1_kipp and zonnen_ghi1",
         ]
 
+    def test_flatten_multi_index_header_fmt(self):
+        m_ix = pd.MultiIndex.from_tuples([("INV 1: Power (KwAC)", "kW")])
+        flattened_ix = io.flatten_multi_index(m_ix, header_fmt="{0} ({1})")
+        assert flattened_ix == ["INV 1: Power (KwAC) (kW)"]
+
+    def test_flatten_multi_index_header_fmt_3levels(self):
+        m_ix = pd.MultiIndex.from_tuples([("met1", "kz", "poa1")])
+        flattened_ix = io.flatten_multi_index(m_ix, header_fmt="{0}|{1}|{2}")
+        assert flattened_ix == ["met1|kz|poa1"]
+
 
 class TestFileReader:
     """
@@ -284,6 +294,106 @@ class TestFileReader:
         loaded_data = io.file_reader(csv_path, index_col=2)
         assert isinstance(loaded_data, pd.DataFrame)
         assert isinstance(loaded_data.index, pd.DatetimeIndex)
+
+
+def write_ae_report(path, rows):
+    """
+    Write a csv shaped like an AlsoEnergy scheduled report.
+
+    Four preamble lines, a heading row, a units row, then 1-minute rows stamped
+    "M/D/YYYY h:mm:ss AM". `rows` is a list of value lists, one per timestamp.
+    """
+    lines = [
+        "Example P2A1 - inv-mtr",
+        "Start date:,11/3/2026 12:00:00 AM",
+        "End date:,11/3/2026 12:00:00 AM",
+        "",
+        "Timestamp,INVERTER 1: Active Power (KwAC),METER: Active Power (KW)",
+        ",kW,kW",
+    ]
+    for i, values in enumerate(rows):
+        stamp = f"11/3/2026 12:{i:02d}:00 AM"
+        lines.append(",".join([stamp] + [str(v) for v in values]))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+class TestFileReaderReportFormat:
+    """Preamble + heading row + units row, as AlsoEnergy scheduled reports."""
+
+    def test_default_join_is_underscore(self, tmp_path):
+        csv_path = tmp_path / "report.csv"
+        write_ae_report(csv_path, [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+        loaded_data = io.file_reader(csv_path, skiprows=4)
+        assert loaded_data.columns.tolist() == [
+            "INVERTER 1: Active Power (KwAC)_kW",
+            "METER: Active Power (KW)_kW",
+        ]
+
+    def test_header_fmt(self, tmp_path):
+        csv_path = tmp_path / "report.csv"
+        write_ae_report(csv_path, [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+        loaded_data = io.file_reader(csv_path, skiprows=4, header_fmt="{0} ({1})")
+        assert loaded_data.columns.tolist() == [
+            "INVERTER 1: Active Power (KwAC) (kW)",
+            "METER: Active Power (KW) (kW)",
+        ]
+        assert isinstance(loaded_data.index, pd.DatetimeIndex)
+        assert loaded_data.index[0] == pd.Timestamp("2026-11-03 00:00")
+        assert loaded_data.shape == (3, 2)
+
+    def test_all_blank_data_rows(self, tmp_path):
+        """A report from a device that sent nothing keeps its columns and stamps."""
+        csv_path = tmp_path / "report.csv"
+        write_ae_report(csv_path, [["", ""], ["", ""], ["", ""]])
+        loaded_data = io.file_reader(csv_path, skiprows=4, header_fmt="{0} ({1})")
+        assert loaded_data.columns.tolist() == [
+            "INVERTER 1: Active Power (KwAC) (kW)",
+            "METER: Active Power (KW) (kW)",
+        ]
+        assert isinstance(loaded_data.index, pd.DatetimeIndex)
+        # Pins a known pandas behaviour (kata vscd): with a multi-row header,
+        # read_csv takes a first data row whose values are all blank as an
+        # index-names row, so the 00:00 stamp is consumed and the frame starts
+        # at 00:01. DataLoader.reindex restores the stamp; if pandas changes,
+        # this assertion is the signal.
+        assert loaded_data.index.tolist() == [
+            pd.Timestamp("2026-11-03 00:01"),
+            pd.Timestamp("2026-11-03 00:02"),
+        ]
+        assert loaded_data.isna().all().all()
+
+    def test_blank_first_row_only_is_consumed(self, tmp_path):
+        """The boundary of the quirk above: a first row with a value is kept."""
+        csv_path = tmp_path / "report.csv"
+        write_ae_report(csv_path, [["", 2.0], ["", ""], ["", ""]])
+        loaded_data = io.file_reader(csv_path, skiprows=4, header_fmt="{0} ({1})")
+        assert loaded_data.index[0] == pd.Timestamp("2026-11-03 00:00")
+        assert loaded_data.shape == (3, 2)
+
+    def test_no_date_in_first_column_raises(self, tmp_path):
+        csv_path = tmp_path / "no_dates.csv"
+        csv_path.write_text("a,b,c\nx,1,2\ny,3,4\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="no date"):
+            io.file_reader(csv_path)
+
+    def test_numeric_index_overflow_raises_value_error(self, tmp_path):
+        """dateutil raises OverflowError on huge numbers; still a clean ValueError."""
+        csv_path = tmp_path / "big_numbers.csv"
+        csv_path.write_text(
+            "a,b,c\nx,99999999999999999999,2\ny,99999999999999999999,4\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="no date"):
+            io.file_reader(csv_path, index_col=1)
+
+    def test_headings_only_raises_value_error(self, tmp_path):
+        csv_path = tmp_path / "headings_only.csv"
+        csv_path.write_text("a,b,c\n", encoding="utf-8")
+        with (
+            pytest.warns(UserWarning, match="no data"),
+            pytest.raises(ValueError, match="no date"),
+        ):
+            io.file_reader(csv_path)
 
 
 class TestLoadPVsyst:

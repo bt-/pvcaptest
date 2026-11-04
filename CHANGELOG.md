@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `file_reader(..., header_fmt=None)` and `flatten_multi_index(columns,
+  header_fmt=None)`: a `str.format` template for joining multi-row column
+  headings, e.g. `"{0} ({1})"` for a heading row followed by a units row
+  (`"Inverter 1: Power (kW)"`). The default still joins rows with "_".
+  `DataLoader.load(header_fmt=...)` passes it through.
 - `CapTestResults.regression_stats` (per side, from `regression_statistics`
   at the test RC), and `std_err`, `t`, `ci_low`, `ci_high` columns on
   `regression_tables`. `CapData.regression_curve(rc, values, x="poa")` predicts
@@ -210,6 +215,11 @@ time, so they are unaffected).
   a plain run.
 
 ### Fixed
+- `file_reader` no longer fails with `UnboundLocalError` on a file with
+  multi-row headings whose data rows are all blank (e.g. a report for a device
+  that sent nothing). It finds the end of the headings among all rows when the
+  non-blank rows hold no date, and raises a `ValueError` naming the file when
+  the index column holds no date at all.
 - Loading a naive local-time index whose repeated fall-back hour appears only
   once no longer raises an ambiguous-time `ValueError`. New
   `clearsky.localize_index` infers both copies when present and otherwise

@@ -1,6 +1,5 @@
 # this file is formatted with black
 import copy
-import datetime
 import warnings
 from dataclasses import dataclass, field
 from itertools import combinations
@@ -67,8 +66,37 @@ def loader_id(identifier):
     return decorate
 
 
-def flatten_multi_index(columns):
-    return ["_".join(col_name) for col_name in columns.to_list()]
+def flatten_multi_index(columns, header_fmt=None):
+    """
+    Join the levels of a column MultiIndex into single strings.
+
+    Parameters
+    ----------
+    columns : pandas.MultiIndex
+        Column index with one level per heading row.
+    header_fmt : str, optional
+        `str.format` template applied to each column's levels in order, e.g.
+        ``"{0} ({1})"`` turns ``("Inverter 1: Power", "kW")`` into
+        ``"Inverter 1: Power (kW)"``. By default the levels are joined with "_".
+
+    Returns
+    -------
+    list of str
+    """
+    if header_fmt is None:
+        return ["_".join(col_name) for col_name in columns.to_list()]
+    return [header_fmt.format(*col_name) for col_name in columns.to_list()]
+
+
+def _find_header_end(index):
+    """Return the position after the first entry of `index` that parses as a date."""
+    for i, indice in enumerate(index):
+        try:
+            dateutil.parser.parse(str(indice))
+        except (ValueError, OverflowError):
+            continue
+        return i + 1
+    return None
 
 
 def load_excel_column_groups(path):
@@ -238,13 +266,23 @@ def file_reader(path, **kwargs):
     ----------
     path : Path
         Path to file to import.
+    header_fmt : str, optional
+        Passed to `flatten_multi_index` when the file has more than one heading
+        row, e.g. ``"{0} ({1})"`` for a heading row followed by a units row. By
+        default heading rows are joined with "_". Not passed to read_csv.
     **kwargs
         Use to pass additional kwargs to pandas read_csv.
 
     Returns
     -------
     pandas DataFrame
+
+    Raises
+    ------
+    ValueError
+        If no entry in the index column parses as a date.
     """
+    header_fmt = kwargs.pop("header_fmt", None)
     default_kwargs = {
         "index_col": 0,
         "parse_dates": True,
@@ -265,26 +303,34 @@ def file_reader(path, **kwargs):
             continue
         else:
             break
+    all_rows = data_file
     if data_file.isna().all().all():
         warnings.warn(f"There is no data in the file {path}")
     else:
-        data_file.dropna(how="all", axis=0, inplace=True)
+        data_file = data_file.dropna(how="all", axis=0)
     if data_file.index.equals(pd.Index(np.arange(len(data_file.index)))):
         kwargs["index_col"] = 1
         data_file = pd.read_csv(
             path,
             **kwargs,
         )
+        all_rows = data_file
+    if data_file.index.empty:
+        raise ValueError(
+            f"Found no date in the index column of {path}: the file has no rows "
+            "below its column headings."
+        )
     if not isinstance(data_file.index[0], pd.Timestamp):
-        for i, _indice in enumerate(data_file.index):
-            try:
-                isinstance(
-                    dateutil.parser.parse(str(data_file.index[i])), datetime.date
-                )
-                header_end = i + 1
-                break
-            except ValueError:
-                continue
+        header_end = _find_header_end(data_file.index)
+        if header_end is None:
+            # Every data row is blank, so dropping all-NaN rows above left only
+            # the heading rows; find the first date among all the rows instead.
+            header_end = _find_header_end(all_rows.index)
+        if header_end is None:
+            raise ValueError(
+                f"Found no date in the index column of {path}, so the end of "
+                "the column headings cannot be determined."
+            )
         header = list(np.arange(header_end))
         kwargs.setdefault("header", header)
         data_file = pd.read_csv(
@@ -292,7 +338,7 @@ def file_reader(path, **kwargs):
             **kwargs,
         )
     if isinstance(data_file.columns, pd.MultiIndex):
-        data_file.columns = flatten_multi_index(data_file.columns)
+        data_file.columns = flatten_multi_index(data_file.columns, header_fmt)
     data_file = data_file.rename(columns=(lambda x: x.strip()))
     return data_file
 
