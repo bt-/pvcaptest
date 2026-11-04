@@ -351,15 +351,48 @@ class TestFileReaderReportFormat:
             "METER: Active Power (KW) (kW)",
         ]
         assert isinstance(loaded_data.index, pd.DatetimeIndex)
-        # read_csv takes a blank first data row after a multi-row header as an
-        # index-names row, so the first stamp may be dropped (kata vscd).
-        assert loaded_data.shape[0] >= 2
+        # Pins a known pandas behaviour (kata vscd): with a multi-row header,
+        # read_csv takes a first data row whose values are all blank as an
+        # index-names row, so the 00:00 stamp is consumed and the frame starts
+        # at 00:01. DataLoader.reindex restores the stamp; if pandas changes,
+        # this assertion is the signal.
+        assert loaded_data.index.tolist() == [
+            pd.Timestamp("2026-11-03 00:01"),
+            pd.Timestamp("2026-11-03 00:02"),
+        ]
         assert loaded_data.isna().all().all()
+
+    def test_blank_first_row_only_is_consumed(self, tmp_path):
+        """The boundary of the quirk above: a first row with a value is kept."""
+        csv_path = tmp_path / "report.csv"
+        write_ae_report(csv_path, [["", 2.0], ["", ""], ["", ""]])
+        loaded_data = io.file_reader(csv_path, skiprows=4, header_fmt="{0} ({1})")
+        assert loaded_data.index[0] == pd.Timestamp("2026-11-03 00:00")
+        assert loaded_data.shape == (3, 2)
 
     def test_no_date_in_first_column_raises(self, tmp_path):
         csv_path = tmp_path / "no_dates.csv"
         csv_path.write_text("a,b,c\nx,1,2\ny,3,4\n", encoding="utf-8")
         with pytest.raises(ValueError, match="no date"):
+            io.file_reader(csv_path)
+
+    def test_numeric_index_overflow_raises_value_error(self, tmp_path):
+        """dateutil raises OverflowError on huge numbers; still a clean ValueError."""
+        csv_path = tmp_path / "big_numbers.csv"
+        csv_path.write_text(
+            "a,b,c\nx,99999999999999999999,2\ny,99999999999999999999,4\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="no date"):
+            io.file_reader(csv_path, index_col=1)
+
+    def test_headings_only_raises_value_error(self, tmp_path):
+        csv_path = tmp_path / "headings_only.csv"
+        csv_path.write_text("a,b,c\n", encoding="utf-8")
+        with (
+            pytest.warns(UserWarning, match="no data"),
+            pytest.raises(ValueError, match="no date"),
+        ):
             io.file_reader(csv_path)
 
 

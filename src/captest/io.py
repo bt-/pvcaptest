@@ -93,7 +93,7 @@ def _find_header_end(index):
     for i, indice in enumerate(index):
         try:
             dateutil.parser.parse(str(indice))
-        except ValueError:
+        except (ValueError, OverflowError):
             continue
         return i + 1
     return None
@@ -315,6 +315,11 @@ def file_reader(path, **kwargs):
             **kwargs,
         )
         all_rows = data_file
+    if data_file.index.empty:
+        raise ValueError(
+            f"Found no date in the index column of {path}: the file has no rows "
+            "below its column headings."
+        )
     if not isinstance(data_file.index[0], pd.Timestamp):
         header_end = _find_header_end(data_file.index)
         if header_end is None:
