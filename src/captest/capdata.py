@@ -24,7 +24,7 @@ from bokeh.models import HoverTool, NumeralTickFormatter
 from patsy import DesignInfo, dmatrix
 from statsmodels.stats.stattools import durbin_watson, jarque_bera, omni_normtest
 
-from captest import plotting, prep, util
+from captest import checks as checks_module, plotting, prep, util
 from captest.filters import (
     AbsDiffPrev,
     Backtracking,
@@ -1000,6 +1000,15 @@ class CapData(param.Parameterized):
         doc="Ordered pipeline of filter/summary steps applied to the data.",
     )
 
+    checks = param.List(
+        default=[],
+        item_type=checks_module.BaseCheck,
+        doc=(
+            "Validity checks registered on this dataset. Checks report; they "
+            "never remove rows. Evaluated by `evaluate_checks`."
+        ),
+    )
+
     prep = param.List(
         default=[],
         item_type=BasePrepStep,
@@ -1133,6 +1142,7 @@ class CapData(param.Parameterized):
         cd_c.column_groups = copy.deepcopy(self.column_groups)
         cd_c.regression_cols = copy.copy(self.regression_cols)
         cd_c.filters = copy.deepcopy(self.filters)
+        cd_c.checks = copy.deepcopy(self.checks)
         # `data` is copied post-prep, so the chain that produced those values
         # has to come with it: dropping it would let the copy serialize to a
         # config that reproduces different data, and would let `run_prep` pass
@@ -2707,6 +2717,259 @@ class CapData(param.Parameterized):
         embed this CapData's pipeline in the single config file.
         """
         return [step.to_config() for step in self.filters]
+
+    def _register_check(self, check):
+        self.checks = [*self.checks, check]
+        return check
+
+    def check_interval_count(self, threshold, min_count, **kwargs):
+        """Register an `IntervalCount` check; it is not evaluated here.
+
+        Parameters
+        ----------
+        threshold : float
+            Irradiance threshold in W/m2.
+        min_count : int
+            Minimum number of intervals at or above ``threshold``.
+        **kwargs
+            Further `captest.checks.IntervalCount` parameters (``irr``,
+            ``data``, ``custom_name``, ...).
+
+        Returns
+        -------
+        captest.checks.IntervalCount
+            The registered check.
+        """
+        return self._register_check(
+            checks_module.IntervalCount(threshold, min_count, **kwargs)
+        )
+
+    def check_duration(self, threshold, min_hours, **kwargs):
+        """Register a `Duration` check; it is not evaluated here.
+
+        Parameters
+        ----------
+        threshold : float
+            Irradiance threshold in W/m2.
+        min_hours : float
+            Minimum hours at or above ``threshold``.
+        **kwargs
+            Further `captest.checks.Duration` parameters.
+
+        Returns
+        -------
+        captest.checks.Duration
+            The registered check.
+        """
+        return self._register_check(
+            checks_module.Duration(threshold, min_hours, **kwargs)
+        )
+
+    def check_continuous_hours(self, threshold, hours, min_days, **kwargs):
+        """Register a `ContinuousHoursDays` check; it is not evaluated here.
+
+        Parameters
+        ----------
+        threshold : float
+            Irradiance threshold in W/m2.
+        hours : float
+            Continuous hours at or above ``threshold`` that make a day count.
+        min_days : int
+            Minimum number of such days.
+        **kwargs
+            Further `captest.checks.ContinuousHoursDays` parameters.
+
+        Returns
+        -------
+        captest.checks.ContinuousHoursDays
+            The registered check.
+        """
+        return self._register_check(
+            checks_module.ContinuousHoursDays(threshold, hours, min_days, **kwargs)
+        )
+
+    def check_daily_insolation(self, threshold_wh_m2, min_days, **kwargs):
+        """Register a `DailyInsolationDays` check; it is not evaluated here.
+
+        Parameters
+        ----------
+        threshold_wh_m2 : float
+            Daily insolation in Wh/m2 that makes a day count.
+        min_days : int
+            Minimum number of such days.
+        **kwargs
+            Further `captest.checks.DailyInsolationDays` parameters.
+
+        Returns
+        -------
+        captest.checks.DailyInsolationDays
+            The registered check.
+        """
+        return self._register_check(
+            checks_module.DailyInsolationDays(threshold_wh_m2, min_days, **kwargs)
+        )
+
+    def check_nrel_irradiance(self, **kwargs):
+        """Register a `NrelMinimumIrradiance` check; it is not evaluated here.
+
+        Parameters
+        ----------
+        **kwargs
+            `captest.checks.NrelMinimumIrradiance` parameters; all default.
+
+        Returns
+        -------
+        captest.checks.NrelMinimumIrradiance
+            The registered check.
+        """
+        return self._register_check(checks_module.NrelMinimumIrradiance(**kwargs))
+
+    def check_any_of(self, *members, custom_name=None):
+        """Register an `AnyOf` check over ``members``; it is not evaluated here.
+
+        Any member already registered on this ``CapData`` (matched by
+        identity) is removed from ``checks``: a member registered by a wrapper
+        is consumed by the composite rather than counted twice.
+
+        Parameters
+        ----------
+        *members : captest.checks.BaseCheck
+            Alternative checks; the composite passes when any member passes.
+        custom_name : str, optional
+            Display label.
+
+        Returns
+        -------
+        captest.checks.AnyOf
+            The registered check.
+        """
+        self.checks = [
+            check for check in self.checks if not any(check is m for m in members)
+        ]
+        return self._register_check(
+            checks_module.AnyOf(*members, custom_name=custom_name)
+        )
+
+    def check_custom(self, func, *args, **kwargs):
+        """Register a `CustomCheck`; it is not evaluated here.
+
+        Parameters
+        ----------
+        func : callable
+            Called as ``func(frame, *args, **kwargs)`` on the selected rows.
+        *args
+            Extra positional arguments for ``func``.
+        **kwargs
+            Extra keyword arguments for ``func``, plus ``custom_name`` and
+            ``data``.
+
+        Returns
+        -------
+        captest.checks.CustomCheck
+            The registered check.
+        """
+        return self._register_check(checks_module.CustomCheck(func, *args, **kwargs))
+
+    def checks_to_config(self):
+        """Serialize the registered checks to a list of config dicts.
+
+        Inverse of :meth:`set_checks`.
+
+        Returns
+        -------
+        list of dict
+            Each entry is a check's yaml-safe ``to_config()``.
+
+        Raises
+        ------
+        ValueError
+            If a check cannot be serialized (for example a lambda custom check
+            or a parameter edited into an invalid state).
+
+        Notes
+        -----
+        ``CapTest.to_yaml`` / ``from_yaml`` do not yet carry CapData checks;
+        serialization of ``meas`` / ``sim`` checks arrives with CapTest PR-test
+        support. Until then, save and restore them with this method and
+        :meth:`set_checks`.
+        """
+        return [check.to_config() for check in self.checks]
+
+    def set_checks(self, config):
+        """Replace ``checks`` with the checks described by ``config``.
+
+        Loading a custom check imports and calls the callable it names, so
+        only load configs from trusted sources.
+
+        Parameters
+        ----------
+        config : list of dict
+            Check configs as returned by :meth:`checks_to_config`.
+
+        Notes
+        -----
+        ``CapTest.from_yaml`` does not yet restore CapData checks; call this
+        method on ``tst.meas`` / ``tst.sim`` yourself until CapTest PR-test
+        support carries them.
+        """
+        self.checks = [checks_module.check_from_config(entry) for entry in config]
+
+    @staticmethod
+    def _check_dt_hours(dt_hours):
+        if not (np.isfinite(dt_hours) and dt_hours > 0):
+            raise ValueError(f"dt_hours must be finite and positive, got {dt_hours!r}.")
+
+    def evaluate_checks(self, *, dt_hours=None, pr_rows=None, period=None):
+        """Evaluate every registered check; data and filters are untouched.
+
+        Parameters
+        ----------
+        dt_hours : float, optional
+            Timestep in hours, finite and positive. Defaults to the dominant
+            timestep of the **unfiltered** ``data`` index.
+        pr_rows : pd.Index, optional
+            Rows kept by the PR calculation. When ``None``, checks that use
+            ``pr_rows`` fall back to ``data_filtered``.
+        period : tuple of pd.Timestamp, optional
+            First and last day of the test period for day-based checks. When
+            ``None``, the span of ``data_filtered`` is used.
+
+        Returns
+        -------
+        dict of str to captest.checks.CheckResult
+            Keyed by check label; repeated labels get `` (2)``, `` (3)``, ...
+            suffixes in registration order, skipping keys already used (also
+            by an explicit ``custom_name``). Each result's ``name`` is its
+            key. Empty when no checks are registered.
+
+        Raises
+        ------
+        ValueError
+            If ``dt_hours`` is not finite and positive.
+        """
+        from captest import prtest
+
+        if dt_hours is not None:
+            self._check_dt_hours(dt_hours)
+        if not self.checks:
+            return {}
+        if dt_hours is None:
+            dt_hours = prtest.dt_hours(self.data.index)
+            self._check_dt_hours(dt_hours)
+        context = checks_module.CheckContext(
+            dt_hours=dt_hours, pr_rows=pr_rows, period=period
+        )
+        results = {}
+        for check in self.checks:
+            label = check.label
+            key, n = label, 1
+            while key in results:
+                n += 1
+                key = f"{label} ({n})"
+            result = check.evaluate(self, context)
+            result.name = key
+            results[key] = result
+        return results
 
     def prep_convert_units(
         self,

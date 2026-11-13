@@ -19,7 +19,7 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 import yaml
 from patsy import ModelDesc, PatsyError
@@ -345,7 +345,118 @@ SEMANTIC_FIELDS = (
 )
 
 
-class TestSetup(_Frozen):
+class _SetupDocument(_Frozen):
+    """Serialization, digests and loading shared by setup document kinds.
+
+    A subclass declares its ``_semantic_fields`` (the fields that carry
+    meaning, as opposed to labels) and its ``kind``: a ``ClassVar`` on
+    ``TestSetup`` (so regression documents carry no ``kind`` field) and a
+    ``Literal["pr"]`` field on ``PrSetup``.
+    """
+
+    _semantic_fields: ClassVar[tuple[str, ...]]
+
+    @field_validator("params", mode="after", check_fields=False)
+    @classmethod
+    def _params_are_downstream(cls, params):
+        bad = sorted(set(params) - set(DOWNSTREAM_PARAMS))
+        if bad:
+            raise ValueError(f"params keys {bad} are not CapTest downstream params")
+        return params
+
+    def to_dict(self):
+        """The normalised document: every field, defaults materialised."""
+        return self.model_dump(mode="json")
+
+    def content_digest(self):
+        """sha256 of ``canonical_json(self.to_dict())``; the document's identity."""
+        return hashlib.sha256(
+            canonical_json(self.to_dict()).encode("utf-8")
+        ).hexdigest()
+
+    def semantic_digest(self):
+        """sha256 of the document's meaning, ignoring its labels.
+
+        Hashes ``canonical_json`` of the class's ``_semantic_fields`` of
+        :meth:`to_dict` only (for ``TestSetup``, :data:`SEMANTIC_FIELDS`), so
+        two documents that differ in nothing but ``name``, ``description`` or
+        ``derived_from`` share a digest. Use it to identify a document across
+        renames and rewordings;
+        :meth:`content_digest` still identifies the exact document.
+
+        Returns
+        -------
+        str
+            64-character lowercase hex digest.
+        """
+        doc = self.to_dict()
+        return hashlib.sha256(
+            canonical_json({k: doc[k] for k in type(self)._semantic_fields}).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+
+    @classmethod
+    def load(cls, source):
+        """Build a setup document from a yaml/json file path or a mapping.
+
+        Always validates through the model; yaml is read with ``safe_load``
+        (json is valid yaml). Files are read as UTF-8 regardless of the
+        platform's locale. Use :meth:`loads` for document text.
+
+        Raises
+        ------
+        ValueError
+            If the document has a ``kind`` key but this class has no ``kind``
+            field; use :func:`load_setup`, which dispatches on ``kind``.
+        """
+        if isinstance(source, dict):
+            return cls._validate_document(source)
+        return cls.loads(Path(source).read_text(encoding="utf-8"))
+
+    @classmethod
+    def loads(cls, text):
+        """Build a setup document from yaml or json document text.
+
+        Raises
+        ------
+        ValueError
+            If the document has a ``kind`` key but this class has no ``kind``
+            field; use :func:`loads_setup`, which dispatches on ``kind``.
+        """
+        return cls._validate_document(yaml.safe_load(text))
+
+    @classmethod
+    def _validate_document(cls, data):
+        if isinstance(data, dict) and "kind" in data and "kind" not in cls.model_fields:
+            raise ValueError(
+                f"{cls.__name__} documents carry no 'kind' key (got "
+                f"kind={data['kind']!r}); use captest.setup.load_setup / "
+                "loads_setup, which choose the document class from 'kind'."
+            )
+        return cls.model_validate(data)
+
+    def to_yaml(self, path):
+        """Write ``to_dict()`` as UTF-8 yaml."""
+        Path(path).write_text(
+            yaml.safe_dump(self.to_dict(), sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+
+    def to_json(self, path):
+        """Write ``to_dict()`` as UTF-8 json."""
+        Path(path).write_text(
+            json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+    @classmethod
+    def json_schema(cls):
+        """JSON Schema of the document shape (an authoring contract)."""
+        return cls.model_json_schema()
+
+
+class TestSetup(_SetupDocument):
     """A complete capacity-test setup document.
 
     Parameters
@@ -374,6 +485,9 @@ class TestSetup(_Frozen):
     #: Not a pytest test class despite the name pattern: this is imported
     #: into ``tests/test_setup.py`` and would otherwise be collected.
     __test__ = False
+
+    kind: ClassVar[str] = "regression"
+    _semantic_fields: ClassVar[tuple[str, ...]] = SEMANTIC_FIELDS
 
     name: str
     description: str = ""
@@ -406,14 +520,6 @@ class TestSetup(_Frozen):
             raise ValueError(f"reg_cols is missing formula variable(s) {missing}")
         return side
 
-    @field_validator("params", mode="after")
-    @classmethod
-    def _params_are_downstream(cls, params):
-        bad = sorted(set(params) - set(DOWNSTREAM_PARAMS))
-        if bad:
-            raise ValueError(f"params keys {bad} are not CapTest downstream params")
-        return params
-
     @field_validator("rep_conditions", mode="after")
     @classmethod
     def _func_keys_are_rhs(cls, rc, info):
@@ -425,73 +531,6 @@ class TestSetup(_Frozen):
         if bad:
             raise ValueError(f"func keys {bad} are not rhs variables of reg_fml")
         return rc
-
-    # --- serialization -------------------------------------------------
-
-    def to_dict(self):
-        """The normalised document: every field, defaults materialised."""
-        return self.model_dump(mode="json")
-
-    def content_digest(self):
-        """sha256 of ``canonical_json(self.to_dict())``; the setup's identity."""
-        return hashlib.sha256(
-            canonical_json(self.to_dict()).encode("utf-8")
-        ).hexdigest()
-
-    def semantic_digest(self):
-        """sha256 of the setup's meaning, ignoring its labels.
-
-        Hashes ``canonical_json`` of the :data:`SEMANTIC_FIELDS` of
-        :meth:`to_dict` only, so two setups that differ in nothing but
-        ``name``, ``description`` or ``derived_from`` share a digest. Use it
-        to identify a setup across renames and rewordings;
-        :meth:`content_digest` still identifies the exact document.
-
-        Returns
-        -------
-        str
-            64-character lowercase hex digest.
-        """
-        doc = self.to_dict()
-        return hashlib.sha256(
-            canonical_json({k: doc[k] for k in SEMANTIC_FIELDS}).encode("utf-8")
-        ).hexdigest()
-
-    @classmethod
-    def load(cls, source):
-        """Build a setup from a yaml/json file path or a mapping.
-
-        Always validates through the model; yaml is read with ``safe_load``
-        (json is valid yaml). Files are read as UTF-8 regardless of the
-        platform's locale. Use :meth:`loads` for document text.
-        """
-        if isinstance(source, dict):
-            return cls.model_validate(source)
-        return cls.loads(Path(source).read_text(encoding="utf-8"))
-
-    @classmethod
-    def loads(cls, text):
-        """Build a setup from yaml or json document text."""
-        return cls.model_validate(yaml.safe_load(text))
-
-    def to_yaml(self, path):
-        """Write ``to_dict()`` as UTF-8 yaml."""
-        Path(path).write_text(
-            yaml.safe_dump(self.to_dict(), sort_keys=False, allow_unicode=True),
-            encoding="utf-8",
-        )
-
-    def to_json(self, path):
-        """Write ``to_dict()`` as UTF-8 json."""
-        Path(path).write_text(
-            json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-
-    @classmethod
-    def json_schema(cls):
-        """JSON Schema of the document shape (an authoring contract)."""
-        return cls.model_json_schema()
 
     @staticmethod
     def derive(base, **changes):
@@ -523,6 +562,209 @@ class TestSetup(_Frozen):
             If the result is not a valid setup.
         """
         return derive(base, **changes)
+
+
+PR_ROLES = ("power", "energy", "poa", "cell_temp", "front_poa", "availability")
+PR_SEMANTIC_FIELDS = ("kind", "temp_corrected", "meas", "sim", "params")
+_REGRESSION_ONLY_KEYS = ("reg_fml", "rep_conditions", "scatter_plots")
+
+
+class PrSetup(_SetupDocument):
+    """A performance-ratio test setup document (``kind: pr``).
+
+    Parameters
+    ----------
+    kind : {"pr"}
+        Document kind discriminator.
+    name : str
+        Setup name.
+    description : str
+        Prose description.
+    derived_from : str or None
+        Provenance only; never used to fill omitted fields.
+    temp_corrected : bool
+        Whether the PR is temperature corrected; requires a measured
+        ``cell_temp`` role.
+    meas, sim : Side
+        ``reg_cols`` keyed by PR role (``power``, ``energy``, ``poa``,
+        ``cell_temp``, ``front_poa``, ``availability``). Each side needs
+        ``poa`` and at least one of ``power`` / ``energy``. ``availability``
+        is measured-side only.
+    params : dict
+        Test-level parameters this setup requires, as for ``TestSetup``.
+    """
+
+    __test__ = False
+
+    kind: Literal["pr"]
+    _semantic_fields: ClassVar[tuple[str, ...]] = PR_SEMANTIC_FIELDS
+
+    name: str
+    description: str = ""
+    derived_from: str | None = None
+    temp_corrected: bool
+    meas: Side
+    sim: Side
+    params: dict[str, Scalar] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_regression_only_keys(cls, data):
+        if isinstance(data, dict):
+            for key in _REGRESSION_ONLY_KEYS:
+                if key in data:
+                    raise ValueError(
+                        f"{key} is not a field of a PR setup (kind: pr); PR "
+                        f"setups have no regression formula, reporting "
+                        f"conditions or scatter plot"
+                    )
+        return data
+
+    @field_validator("meas", "sim", mode="after")
+    @classmethod
+    def _roles_valid(cls, side, info):
+        roles = side.reg_cols
+        for role in roles:
+            if role not in PR_ROLES:
+                hint = difflib.get_close_matches(role, PR_ROLES, n=1)
+                suffix = f" Did you mean {hint[0]!r}?" if hint else ""
+                raise ValueError(f"unknown role {role!r}.{suffix}")
+        if "poa" not in roles:
+            raise ValueError("a PR side needs a 'poa' role")
+        if "power" not in roles and "energy" not in roles:
+            raise ValueError("a PR side needs at least one of 'power' or 'energy'")
+        if info.field_name == "sim" and "availability" in roles:
+            raise ValueError(
+                "availability is a measured-side input; the modeled "
+                "reference always uses A = 1"
+            )
+        return side
+
+    @model_validator(mode="after")
+    def _corrected_needs_cell_temp(self):
+        if self.temp_corrected and "cell_temp" not in self.meas.reg_cols:
+            raise ValueError("temp_corrected is true but meas has no 'cell_temp' role")
+        return self
+
+    @staticmethod
+    def derive(base, **changes):
+        """Return a new complete PR setup derived from ``base``.
+
+        A thin delegate to :func:`captest.setup.derive_pr`.
+
+        Parameters
+        ----------
+        base : PrSetup
+        **changes
+            Keyword arguments forwarded to :func:`captest.setup.derive_pr`
+            (``name``, ``description``, ``temp_corrected``,
+            ``reg_cols_meas``, ``reg_cols_sim``, ``params``).
+
+        Returns
+        -------
+        PrSetup
+
+        Raises
+        ------
+        DerivationError
+            See :func:`captest.setup.derive_pr`.
+        pydantic.ValidationError
+            If the result is not a valid PR setup.
+        """
+        return derive_pr(base, **changes)
+
+
+SetupDocument = TestSetup | PrSetup
+
+_SETUP_KINDS = ("regression", "pr")
+
+
+def validate_setup(data):
+    """Validate a setup mapping as the document kind its ``kind`` names.
+
+    A mapping without ``kind`` (or with ``kind: regression``) is a
+    :class:`TestSetup`; ``kind: pr`` is a :class:`PrSetup`. The input is not
+    modified.
+
+    Parameters
+    ----------
+    data : dict
+        Setup document as plain data.
+
+    Returns
+    -------
+    TestSetup or PrSetup
+
+    Raises
+    ------
+    TypeError
+        If ``data`` is not a dict.
+    ValueError
+        If ``kind`` is not a known kind.
+    pydantic.ValidationError
+        If the document is not valid for its kind.
+    """
+    if not isinstance(data, dict):
+        raise TypeError(
+            f"a setup document must be a mapping, not {type(data).__name__}"
+        )
+    kind = data.get("kind", "regression")
+    if kind == "regression":
+        data = {k: v for k, v in data.items() if k != "kind"}
+        return TestSetup.model_validate(data)
+    if kind == "pr":
+        return PrSetup.model_validate(data)
+    raise ValueError(f"unknown setup kind {kind!r}; known kinds: {list(_SETUP_KINDS)}")
+
+
+def loads_setup(text):
+    """Build a setup document of the right kind from yaml or json text.
+
+    Parameters
+    ----------
+    text : str
+        yaml or json document text.
+
+    Returns
+    -------
+    TestSetup or PrSetup
+
+    Raises
+    ------
+    TypeError
+        If the text does not parse to a mapping.
+    ValueError
+        If ``kind`` is not a known kind.
+    pydantic.ValidationError
+        If the document is not valid for its kind.
+    """
+    return validate_setup(yaml.safe_load(text))
+
+
+def load_setup(source):
+    """Build a setup document of the right kind from a path or a mapping.
+
+    Parameters
+    ----------
+    source : str, pathlib.Path or dict
+        A yaml/json file path (read as UTF-8) or a plain mapping.
+
+    Returns
+    -------
+    TestSetup or PrSetup
+
+    Raises
+    ------
+    TypeError
+        If the file does not parse to a mapping.
+    ValueError
+        If ``kind`` is not a known kind.
+    pydantic.ValidationError
+        If the document is not valid for its kind.
+    """
+    if isinstance(source, dict):
+        return validate_setup(source)
+    return loads_setup(Path(source).read_text(encoding="utf-8"))
 
 
 # --- derive ------------------------------------------------------------
@@ -647,6 +889,85 @@ def derive(
     func = dict(data["rep_conditions"].get("func") or {})
     data["rep_conditions"]["func"] = {k: v for k, v in func.items() if k not in dropped}
     return TestSetup.model_validate(data)
+
+
+def _check_pr_override_roles(side_name, override):
+    """Reject non-PR override keys; run before ``merge_reg_cols``.
+
+    ``merge_reg_cols`` words its unknown-key error for a regression formula.
+    """
+    for role in override or {}:
+        if role not in PR_ROLES:
+            hint = difflib.get_close_matches(role, PR_ROLES, n=1)
+            suffix = f" Did you mean {hint[0]!r}?" if hint else ""
+            raise DerivationError(
+                f"{side_name} override key {role!r} is not a PR role; "
+                f"allowed roles are {list(PR_ROLES)}.{suffix}"
+            )
+
+
+def derive_pr(
+    base,
+    *,
+    name=None,
+    description=None,
+    temp_corrected=None,
+    reg_cols_meas=None,
+    reg_cols_sim=None,
+    params=None,
+):
+    """Return a new complete PR setup derived from ``base``.
+
+    ``reg_cols_meas`` / ``reg_cols_sim`` merge key by key by role (a present
+    key replaces that role's whole node, ``None`` removes the role); every
+    other argument replaces its field wholesale. ``derived_from`` is set to
+    ``base.name``; ``name`` defaults to ``base.name``.
+
+    Parameters
+    ----------
+    base : PrSetup
+    name, description : str or None
+    temp_corrected : bool or None
+    reg_cols_meas, reg_cols_sim : dict or None
+        PR role -> node (mapping or model), or ``None`` to remove the role.
+    params : dict or None
+
+    Returns
+    -------
+    PrSetup
+
+    Raises
+    ------
+    TypeError
+        If ``base`` is not a ``PrSetup``.
+    DerivationError
+        For an override key that is not one of ``PR_ROLES``, or ``None`` on
+        a role the base lacks.
+    pydantic.ValidationError
+        If the result is not a valid PR setup (e.g. removing ``poa``, or
+        removing ``cell_temp`` while ``temp_corrected`` is true).
+    """
+    if not isinstance(base, PrSetup):
+        raise TypeError(
+            f"derive_pr needs a PrSetup base, got {type(base).__name__}; use "
+            f"derive for regression setups"
+        )
+    _check_pr_override_roles("meas", reg_cols_meas)
+    _check_pr_override_roles("sim", reg_cols_sim)
+    data = base.to_dict()
+    data["derived_from"] = base.name
+    if name is not None:
+        data["name"] = name
+    if description is not None:
+        data["description"] = description
+    if temp_corrected is not None:
+        data["temp_corrected"] = temp_corrected
+    if params is not None:
+        data["params"] = dict(params)
+    roles = set(PR_ROLES)
+    data["meas"] = {"reg_cols": merge_reg_cols(base.meas, reg_cols_meas, roles)}
+    data["sim"] = {"reg_cols": merge_reg_cols(base.sim, reg_cols_sim, roles)}
+    return PrSetup.model_validate(data)
 
 
 # --- tier 2: project fit ---------------------------------------------------

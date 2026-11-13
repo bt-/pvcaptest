@@ -31,7 +31,7 @@ from tests.setup_fixtures import build_meas_default, build_sim_default
 # default fixtures; otherwise add a dedicated fixture and a targeted test.
 _DEFAULT_FIXTURE_PRESETS = [
     p
-    for p in ct.TEST_SETUPS
+    for p in ct.regression_setups()
     if p
     not in {
         "e2848_spec_corrected_poa",
@@ -60,19 +60,130 @@ def other_pvsyst_file():
     return str(Path("./tests/data/pvsyst_example_HourlyRes_2_xls_dates.csv").resolve())
 
 
+_PR_DOC = {
+    "kind": "pr",
+    "name": "pr_tmp",
+    "description": "temporary PR setup",
+    "temp_corrected": False,
+    "meas": {"reg_cols": {"power": {"column": "p"}, "poa": {"column": "g"}}},
+    "sim": {"reg_cols": {"power": {"column": "p"}, "poa": {"column": "g"}}},
+}
+
+
+@pytest.fixture
+def pr_tmp(monkeypatch):
+    """Register a temporary PR setup named ``pr_tmp`` in ``TEST_SETUPS``."""
+    from captest.setup import PrSetup
+
+    setup = PrSetup.model_validate(_PR_DOC)
+    monkeypatch.setitem(ct.TEST_SETUPS, "pr_tmp", setup)
+    return setup
+
+
+class TestPrRegistry:
+    def test_load_presets_returns_both_kinds(self, tmp_path):
+        from captest.setup import PrSetup, TestSetup
+
+        reg = ct.TEST_SETUPS["e2848_default"].to_dict()
+        (tmp_path / "e2848_default.yaml").write_text(yaml.safe_dump(reg))
+        (tmp_path / "pr_tmp.yaml").write_text(yaml.safe_dump(_PR_DOC))
+        presets = ct.load_presets(tmp_path)
+        assert isinstance(presets["e2848_default"], TestSetup)
+        assert isinstance(presets["pr_tmp"], PrSetup)
+
+    def test_load_presets_pr_name_must_equal_stem(self, tmp_path):
+        (tmp_path / "other.yaml").write_text(yaml.safe_dump(_PR_DOC))
+        with pytest.raises(ValueError, match="file stem"):
+            ct.load_presets(tmp_path)
+
+    def test_names_by_kind(self, pr_tmp):
+        assert "pr_tmp" in ct.pr_setups()
+        assert "pr_tmp" not in ct.regression_setups()
+        assert "e2848_default" in ct.regression_setups()
+
+    @pytest.mark.parametrize(
+        "key, value",
+        [
+            ("reg_fml", "power ~ poa"),
+            ("rep_conditions", {"percent_filter": 20}),
+            ("scatter_plots", "default"),
+        ],
+    )
+    def test_regression_only_override_rejected(self, pr_tmp, key, value):
+        with pytest.raises(ValueError, match=f"{key}.*kind: pr"):
+            ct.resolve_test_setup("pr_tmp", {key: value})
+
+    def test_reg_cols_override_derives_pr_setup(self, pr_tmp):
+        from captest.setup import PrSetup
+
+        got = ct.resolve_test_setup(
+            "pr_tmp", {"reg_cols_meas": {"poa": {"column": "x"}}}
+        )
+        assert isinstance(got, PrSetup)
+        assert got.derived_from == "pr_tmp"
+        assert got.meas.reg_cols["poa"].column == "x"
+
+    def test_unknown_role_is_value_error(self, pr_tmp):
+        with pytest.raises(ValueError):
+            ct.resolve_test_setup(
+                "pr_tmp", {"reg_cols_meas": {"bogus": {"column": "x"}}}
+            )
+
+    def test_empty_overrides_return_the_preset(self, pr_tmp):
+        assert ct.resolve_test_setup("pr_tmp", {}) is pr_tmp
+
+    def test_no_change_override_returns_the_preset(self, pr_tmp):
+        same = {"poa": {"column": "g"}}
+        assert ct.resolve_test_setup("pr_tmp", {"reg_cols_meas": same}) is pr_tmp
+
+    def test_test_setups_lists_kind(self, capsys):
+        ct.test_setups()
+        assert "e2848_default [regression]" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "method", ["setup", "check_fit", "to_mapping", "captest_results"]
+    )
+    def test_captest_is_guarded(self, pr_tmp, method):
+        tst = CapTest(test_setup="pr_tmp", meas=CapData("m"), sim=CapData("s"))
+        with pytest.raises(NotImplementedError, match="not yet run by CapTest"):
+            getattr(tst, method)()
+
+    def test_captest_results_guard_does_not_resolve_the_setup(
+        self, pr_tmp, monkeypatch
+    ):
+        def fail(*args, **kwargs):
+            raise AssertionError("resolve_test_setup must not be called")
+
+        monkeypatch.setattr(ct, "resolve_test_setup", fail)
+        tst = CapTest(test_setup="pr_tmp", meas=CapData("m"), sim=CapData("s"))
+        with pytest.raises(NotImplementedError, match="not yet run by CapTest"):
+            tst.captest_results()
+
+    def test_params_override_derives_pr_setup(self, pr_tmp):
+        got = ct.resolve_test_setup("pr_tmp", {"params": {"rear_shade": 0}})
+        assert got.params == {"rear_shade": 0}
+        assert got.derived_from == "pr_tmp"
+
+    def test_test_setups_descriptions_with_pr_entry(self, pr_tmp, capsys):
+        ct.test_setups(descriptions=True)
+        out = capsys.readouterr().out
+        assert "pr_tmp [pr]" in out
+        assert "temporary PR setup" in out
+
+
 class TestTestSetupsRegistry:
     @pytest.mark.parametrize("preset", sorted(ct.TEST_SETUPS))
     def test_each_preset_is_a_test_setup(self, preset):
-        from captest.setup import TestSetup
+        from captest.setup import PrSetup, TestSetup
 
-        assert isinstance(ct.TEST_SETUPS[preset], TestSetup)
+        assert isinstance(ct.TEST_SETUPS[preset], (TestSetup, PrSetup))
         assert ct.TEST_SETUPS[preset].name == preset
 
-    @pytest.mark.parametrize("preset", sorted(ct.TEST_SETUPS))
+    @pytest.mark.parametrize("preset", ct.regression_setups())
     def test_each_preset_lhs_is_power(self, preset):
         assert ct.TEST_SETUPS[preset].reg_fml.split("~")[0].strip() == "power"
 
-    @pytest.mark.parametrize("preset", sorted(ct.TEST_SETUPS))
+    @pytest.mark.parametrize("preset", ct.regression_setups())
     def test_each_preset_scatter_name_is_registered(self, preset):
         assert ct.TEST_SETUPS[preset].scatter_plots in ct.SCATTER_REGISTRY
 
