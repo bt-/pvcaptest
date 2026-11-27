@@ -137,6 +137,9 @@ There are two levels of API.
 - `BaseSummaryStep` / `BaseFilter` base classes plus concrete steps (`Irradiance`, `Time`, `Pvsyst`, `Shade`, `Days`, `PowerFactor`, `Power`, `Missing`, `Sensors`, `Outliers`, `Clearsky`, `Custom`, `Regression`, `RepCond`). Each declares its config as `param` parameters and implements `_execute(capdata)` returning the kept index; `run()` records `ix_after` / `pts_after` and appends itself to `capdata.filters`.
 - `FILTER_REGISTRY` + `step_from_config()` (de)serialize steps via each class's `to_config` / `from_config`; callable params encode through `util` helpers. Also holds the moved row-filter helpers (`filter_irr`, `sensor_filter`, `check_all_perc_diff_comb`, ...). **Imported one-way by `capdata.py`; it never imports `capdata`** — steps touch a `CapData` only through the runtime `capdata` argument.
 
+**`src/captest/prep.py`** — Prep steps
+- `BasePrepStep` subclasses (`ConvertUnits`, `Scale`, `AsType`, `DropColumns`, `RenameColumns`, `Custom`) change a `CapData`'s data before filtering (units, scale, dtypes, dropping or renaming columns), recorded as the `meas_prep` / `sim_prep` lists of a config. `PREP_REGISTRY` + `prep_step_from_config()` (de)serialize them via `to_config` / `from_config`. Check here before editing a project's column groups or data: `DropColumns` drops sensors before a group is aggregated.
+
 **`src/captest/clearsky.py`** — Clear-sky modeling
 - pvlib-based clear-sky GHI/POA modeling used by `io.load_data` when site metadata is supplied. Clear-sky *filtering* (`Clearsky`) is separate and uses `pvlib.clearsky.detect_clearsky` directly.
 
